@@ -9,8 +9,8 @@ import type {
 import { FLEET_REFRESH_MS } from '../constants.js';
 import { fleetPanelErrorReducer, initialFleetPanelErrors } from '../fleet/panelErrors.js';
 import { serverToken } from '../transport/serverToken.js';
-import { FleetTimelinePanel } from './FleetTimelinePanel.js';
 import { FleetDiagnosticPanel, FleetTransportHealth } from './FleetHealth.js';
+import { FleetTimelinePanel } from './FleetTimelinePanel.js';
 import { Button } from './ui/Button.js';
 
 async function request<T>(path = '', method = 'GET', body?: unknown): Promise<T> {
