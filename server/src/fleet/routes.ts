@@ -22,6 +22,7 @@ export function registerFleetRoutes(
       return reply.code(403).send({ error: 'Untrusted origin or host' });
   };
   app.get('/api/fleet', { preHandler: authorize }, async () => fleet.snapshot());
+  app.get('/api/fleet/timeline', { preHandler: authorize }, async () => fleet.timeline.snapshot());
   app.get<{ Params: { id: string } }>(
     '/api/fleet/conversations/:id',
     { preHandler: authorize },

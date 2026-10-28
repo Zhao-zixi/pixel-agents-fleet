@@ -24,6 +24,7 @@ import {
   FLEET_MAX_OUTPUT,
   FLEET_MAX_RUNNING,
 } from './profiles.js';
+import { FleetTimeline, type FleetTimelineOptions } from './timeline.js';
 
 interface ConversationState {
   conversation: FleetConversation;
@@ -45,6 +46,7 @@ interface RunState {
 
 /** A run owns ONE PTY. Each conversation owns ONE character and its own tool/output state. */
 export class FleetService {
+  readonly timeline: FleetTimeline;
   private readonly runs = new Map<number, RunState>();
   private readonly conversations = new Map<number, ConversationState>();
   private readonly internalRemovals = new Set<number>();
@@ -63,7 +65,9 @@ export class FleetService {
     private readonly store: AgentStateStore,
     private readonly pty: PtySessionManager,
     private readonly reserveClaudeSession?: (sessionId: string, cwd: string) => void,
+    timelineOptions: FleetTimelineOptions = FleetTimeline.fromEnvironment(),
   ) {
+    this.timeline = new FleetTimeline(timelineOptions);
     store.on('agentRemoved', this.onRemoved);
   }
 
@@ -160,6 +164,7 @@ export class FleetService {
       telemetry: false,
     };
     this.runs.set(id, state);
+    this.timeline.record({ runId: id, kind: 'launch', status: 'running' });
     // Reuse this placeholder for the first observed session: no duplicate startup character.
     this.createConversation(state, id, run.sessionId, prompt.trim().slice(0, 80) || profile.name);
     this.store.broadcast({ type: 'terminalSessionOpened', agentId: id });
@@ -188,6 +193,7 @@ export class FleetService {
       }
       this.store.broadcast({ type: 'terminalSessionClosed', agentId: id, exitCode: exit.exitCode });
       this.appendRun(state, `\n[${run.activity}]\n`);
+      this.timeline.record({ runId: id, kind: 'exit', status: run.status });
     });
     return id;
   }
@@ -337,6 +343,12 @@ export class FleetService {
     run.conversations.set(id, state);
     if (sessionId) run.bySession.set(sessionId, id);
     this.conversations.set(id, state);
+    this.timeline.record({
+      runId: run.run.id,
+      conversationId: id,
+      kind: 'conversation',
+      status: 'running',
+    });
     this.store.set(id, agent);
     this.sendInfo(state);
     this.store.broadcast({ type: 'agentStatus', id, status: 'active' });
@@ -518,6 +530,11 @@ export class FleetService {
         break;
     }
     run.run.activity = `${run.conversations.size} conversation(s)`;
+    if (event.kind !== 'done' && event.kind !== 'error')
+      this.timeline.record(
+        { runId: run.run.id, conversationId: c.id, kind: event.kind, status: c.status },
+        event.kind === 'tool' || event.kind === 'toolEnd' ? event.id : undefined,
+      );
   }
 
   private finish(
@@ -528,6 +545,12 @@ export class FleetService {
     state.conversation.status = status;
     state.conversation.activity = activity;
     state.conversation.updatedAt = Date.now();
+    this.timeline.record({
+      runId: state.conversation.runId,
+      conversationId: state.conversation.id,
+      kind: status === 'failed' ? 'error' : status,
+      status,
+    });
     this.clearTools(state, status === 'failed');
     clearTimeout(state.archiveTimer);
     // Keep failures and questions visible for attention; completed/stopped work goes to history.

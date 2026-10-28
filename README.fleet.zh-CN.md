@@ -254,3 +254,13 @@ node --import tsx scripts/test-fleet-ui.ts
 - https://code.claude.com/docs/en/headless
 - https://geminicli.com/docs/cli/headless/
 - https://opencode.ai/docs/cli/
+
+### 事件时间线与重启历史（只读）
+
+小队面板的「事件时间线 / 重启历史」可以按进程、对话筛选事件，拖动时间游标查看当时记录的状态。返回实时视图不会启动 Agent、发送终端输入或重新执行工具。此阶段回放是状态列表，不是像素动画回放。
+
+默认仅在内存中保留最近 2,000 条状态事件。若需要重启后历史，在启动服务器前设置 `PIXEL_AGENTS_FLEET_HISTORY_FILE` 为已有私有目录内的日志文件绝对路径（例如自己创建的状态目录中的 `fleet-history.jsonl`）。不要让多个服务器共享同一个文件。未开启持久化时，UI 明确显示「仅本次运行内存记录」。
+
+可选限制：`PIXEL_AGENTS_FLEET_HISTORY_MAX_EVENTS`（默认 2000，上限 10000）、`PIXEL_AGENTS_FLEET_HISTORY_MAX_BYTES`（默认 2097152，上限 8388608）、`PIXEL_AGENTS_FLEET_HISTORY_MAX_DAYS`（默认 7，上限 90）。超过任一限制会移除最早事件并显示历史不完整提示；损坏或半写入的行被跳过，完整行仍可恢复。日志写入失败不影响 Agent，但面板提示新的事件只在内存中。
+
+记录只包含时间、启动批次、进程/对话编号、事件类型、状态和单向哈希的工具引用，不保存任务、路径、会话标识、终端输出或工具参数。「导出状态元数据」只导出上述字段；原始输出导出尚不提供，避免无意泄露凭据。历史中上次服务器的运行中/等待任务显示「执行状态未知 / 已中断待确认」，不会当成当前存活进程；完成的对话仍保持已完成。相同工具 ID 在不同对话中有独立引用。

@@ -4,6 +4,7 @@ import type { FleetConversation, FleetRun, FleetSnapshot } from '../../../core/s
 import { FLEET_REFRESH_MS } from '../constants.js';
 import { fleetPanelErrorReducer, initialFleetPanelErrors } from '../fleet/panelErrors.js';
 import { serverToken } from '../transport/serverToken.js';
+import { FleetTimelinePanel } from './FleetTimelinePanel.js';
 import { Button } from './ui/Button.js';
 
 async function request<T>(path = '', method = 'GET', body?: unknown): Promise<T> {
@@ -311,6 +312,7 @@ export function FleetPanel({ onFocus }: { onFocus: (id: number) => void }) {
               <p className="fleet-muted">选择环境，启动第一个 Agent。</p>
             )}
           </div>
+          <FleetTimelinePanel />
           {detail && (
             <div className="fleet-detail">
               <strong>
