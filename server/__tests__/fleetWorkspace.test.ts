@@ -119,6 +119,35 @@ describe('read-only Fleet workspace observations', () => {
     });
     expect(JSON.stringify(current)).not.toContain('RENAMED_SECRET_VALUE');
   });
+  it('never claims unchanged content for hidden, binary or unreadable files', () => {
+    const { cwd, profile } = repo();
+    writeFileSync(path.join(cwd, '.env'), 'SECRET_BEFORE');
+    writeFileSync(path.join(cwd, 'binary.bin'), Buffer.from([0, 1, 2]));
+    writeFileSync(path.join(cwd, 'huge.txt'), 'a'.repeat(1024 * 1024 + 1));
+    const baseline = captureWorkspace(profile);
+    writeFileSync(path.join(cwd, '.env'), 'SECRET_AFTER');
+    writeFileSync(path.join(cwd, 'binary.bin'), Buffer.from([0, 9, 8]));
+    writeFileSync(path.join(cwd, 'huge.txt'), 'b'.repeat(1024 * 1024 + 1));
+    const current = compareWorkspace(baseline, captureWorkspace(profile));
+    for (const name of ['.env', 'binary.bin', 'huge.txt']) {
+      expect(current.files.find((file) => file.path === name)?.change).toBe('content-unobserved');
+    }
+    expect(JSON.stringify(current)).not.toContain('SECRET_');
+    // A status-only fingerprint is not evidence, even when unchanged in both snapshots.
+    const symlink = {
+      path: 'link',
+      index: '?',
+      worktree: '?',
+      kind: 'symlink' as const,
+      patch: '',
+      fingerprint: '??:symlink',
+      truncated: false,
+    };
+    expect(
+      compareWorkspace({ ...baseline, files: [symlink] }, { ...baseline, files: [symlink] })
+        .files[0].change,
+    ).toBe('content-unobserved');
+  });
   it('does not run repository clean filters or external diff commands', () => {
     const { cwd, git, profile } = repo();
     writeFileSync(path.join(cwd, '.gitattributes'), '*.txt filter=evil diff=evil\n');

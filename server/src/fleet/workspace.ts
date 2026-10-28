@@ -255,10 +255,12 @@ export function compareWorkspace(
         ? baseline.truncated
           ? undefined
           : 'new-since-start'
-        : old.fingerprint === file.fingerprint
-          ? 'pre-existing'
-          : 'changed-since-start',
-      ...(old?.kind === 'text' ? { baselinePatch: old.patch } : {}),
+        : old.kind !== 'text' || file.kind !== 'text' || !old.fingerprint || !file.fingerprint
+          ? 'content-unobserved'
+          : old.fingerprint === file.fingerprint
+            ? 'pre-existing'
+            : 'changed-since-start',
+      ...(old?.kind === 'text' && file.kind === 'text' ? { baselinePatch: old.patch } : {}),
     };
   });
   if (!current.truncated)

@@ -9,6 +9,7 @@ const changeLabels = {
   'changed-since-start': '启动后变化（来源未确认）',
   'new-since-start': '启动后新观察到的变化',
   resolved: '原有变化已消失',
+  'content-unobserved': '内容未比较，无法确认启动后是否变化',
 };
 export function FleetWorkspacePanel({ runId }: { runId: number }) {
   const [report, setReport] = useState<FleetWorkspaceReport | null>(null);

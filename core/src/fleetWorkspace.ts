@@ -8,7 +8,8 @@ export interface FleetWorkspaceFile {
   patch: string;
   fingerprint: string;
   truncated: boolean;
-  change?: 'pre-existing' | 'changed-since-start' | 'new-since-start' | 'resolved';
+  change?:
+    'pre-existing' | 'changed-since-start' | 'new-since-start' | 'resolved' | 'content-unobserved';
   baselinePatch?: string;
 }
 export interface FleetWorkspaceSnapshot {
