@@ -11,6 +11,7 @@ import { fleetPanelErrorReducer, initialFleetPanelErrors } from '../fleet/panelE
 import { serverToken } from '../transport/serverToken.js';
 import { FleetDiagnosticPanel, FleetTransportHealth } from './FleetHealth.js';
 import { FleetTimelinePanel } from './FleetTimelinePanel.js';
+import { FleetWorkspacePanel } from './FleetWorkspacePanel.js';
 import { Button } from './ui/Button.js';
 
 async function request<T>(path = '', method = 'GET', body?: unknown): Promise<T> {
@@ -334,6 +335,12 @@ export function FleetPanel({ onFocus }: { onFocus: (id: number) => void }) {
             )}
           </div>
           <FleetTimelinePanel />
+          {detail && (
+            <FleetWorkspacePanel
+              key={selected?.kind === 'runs' ? detail.id : (detail as FleetConversation).runId}
+              runId={selected?.kind === 'runs' ? detail.id : (detail as FleetConversation).runId}
+            />
+          )}
           {detail && (
             <div className="fleet-detail">
               <strong>

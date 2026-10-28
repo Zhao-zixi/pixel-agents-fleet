@@ -7,6 +7,10 @@ import type {
   FleetRun,
   FleetSnapshot,
 } from '../../../core/src/fleet.js';
+import type {
+  FleetWorkspaceReport,
+  FleetWorkspaceSnapshot,
+} from '../../../core/src/fleetWorkspace.js';
 import { createAgentState } from '../agentState.js';
 import type { AgentStateStore } from '../agentStateStore.js';
 import { assignPaletteIfNeeded } from '../paletteAssigner.js';
@@ -26,6 +30,7 @@ import {
   FLEET_MAX_RUNNING,
 } from './profiles.js';
 import { FleetTimeline, type FleetTimelineOptions } from './timeline.js';
+import { captureWorkspace, compareWorkspace } from './workspace.js';
 
 interface ConversationState {
   conversation: FleetConversation;
@@ -49,6 +54,8 @@ interface RunState {
 export class FleetService {
   readonly timeline: FleetTimeline;
   private readonly diagnostics = new Set<string>();
+
+  private readonly workspaces = new Map<number, FleetWorkspaceSnapshot>();
   private readonly runs = new Map<number, RunState>();
   private readonly conversations = new Map<number, ConversationState>();
   private readonly internalRemovals = new Set<number>();
@@ -98,6 +105,29 @@ export class FleetService {
   }
   getConversation(id: number): FleetConversation | undefined {
     return this.conversations.get(id)?.conversation;
+  }
+  workspace(id: number): FleetWorkspaceReport | undefined {
+    const state = this.runs.get(id);
+    const baseline = this.workspaces.get(id);
+    const profile = this.profiles.find((p) => p.id === state?.run.profileId);
+    if (!state || !baseline || !profile) return undefined;
+    const current = compareWorkspace(baseline, captureWorkspace(profile));
+    const relatedRunIds = [...this.workspaces.entries()]
+      .filter(
+        ([runId, item]) =>
+          this.runs.has(runId) && item.status === 'ready' && item.key === baseline.key,
+      )
+      .map(([runId]) => runId);
+    const concurrent = relatedRunIds.filter(
+      (runId) => this.runs.get(runId)?.run.status === 'running',
+    );
+    return {
+      baseline,
+      current,
+      relatedRunIds,
+      overlapRisk: concurrent.length > 1 && current.files.length > 0,
+      attribution: 'unknown',
+    };
   }
   liveRunIds(): number[] {
     return [...this.runs.values()].filter((r) => r.run.status === 'running').map((r) => r.run.id);
@@ -152,8 +182,11 @@ export class FleetService {
     if (profile.provider === 'claude' && !profile.ssh)
       this.reserveClaudeSession?.(sessionId, profile.cwd);
     const id = this.store.nextAgentId.current++;
+    const baseline = captureWorkspace(profile);
     const session = this.pty.create({ agentId: id, ...command });
     for (const eviction of evictions) this.dismiss(eviction.run.id);
+
+    this.workspaces.set(id, baseline);
     const run: FleetRun = {
       id,
       profileId,
@@ -331,6 +364,7 @@ export class FleetService {
       this.conversations.delete(conversationId);
     }
     this.runs.delete(id);
+    this.workspaces.delete(id);
   }
 
   dispose(): void {
