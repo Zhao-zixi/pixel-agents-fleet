@@ -13,6 +13,7 @@ import { assignPaletteIfNeeded } from '../paletteAssigner.js';
 import type { PtySessionManager } from '../terminal/ptySessionManager.js';
 import type { AgentState } from '../types.js';
 import { animationTool, type FleetEvent, parseFleetPacket } from './events.js';
+import { diagnoseProfile, initialTransport, transportExit, transportOutput } from './health.js';
 import {
   buildFleetCommand,
   FLEET_ACTIVITY_TIMEOUT,
@@ -47,6 +48,7 @@ interface RunState {
 /** A run owns ONE PTY. Each conversation owns ONE character and its own tool/output state. */
 export class FleetService {
   readonly timeline: FleetTimeline;
+  private readonly diagnostics = new Set<string>();
   private readonly runs = new Map<number, RunState>();
   private readonly conversations = new Map<number, ConversationState>();
   private readonly internalRemovals = new Set<number>();
@@ -109,6 +111,19 @@ export class FleetService {
     );
   }
 
+  async diagnose(profileId: string) {
+    const profile = this.profiles.find((p) => p.id === profileId);
+    if (!profile?.ssh) throw new Error('Unknown SSH profile');
+    if (this.diagnostics.has(profileId) || this.diagnostics.size >= 4)
+      throw new Error('Diagnostic already running; try again later');
+    this.diagnostics.add(profileId);
+    try {
+      return await diagnoseProfile(profile);
+    } finally {
+      this.diagnostics.delete(profileId);
+    }
+  }
+
   launch(profileId: string, prompt: string): number {
     const profile = this.profiles.find((p) => p.id === profileId);
     if (!profile) throw new Error('Unknown profile');
@@ -151,6 +166,7 @@ export class FleetService {
       activity: profile.ssh ? 'SSH connecting' : 'Starting',
       startedAt: Date.now(),
       output: '',
+      transport: initialTransport(!!profile.ssh),
       ...(profile.provider === 'claude' ? { sessionId } : {}),
     };
     const state: RunState = {
@@ -174,19 +190,37 @@ export class FleetService {
       if (!this.runs.has(id)) return;
       if (state.buffer && !state.droppingLine) this.onLine(state, state.buffer);
       state.buffer = '';
+      if (run.transport) transportExit(run.transport, exit.exitCode, state.stopped);
+      const remoteUnknown = !!profile.ssh && (exit.exitCode === 255 || state.stopped);
       run.exitCode = exit.exitCode;
       run.endedAt = Date.now();
       const failed = [...state.conversations.values()].some(
         (s) => s.conversation.status === 'failed',
       );
-      run.status = state.stopped ? 'stopped' : exit.exitCode !== 0 || failed ? 'failed' : 'done';
-      run.activity = run.status === 'failed' ? `Failed (exit ${exit.exitCode})` : run.status;
+      run.status = remoteUnknown
+        ? 'unknown'
+        : state.stopped
+          ? 'stopped'
+          : exit.exitCode !== 0 || failed
+            ? 'failed'
+            : 'done';
+      run.activity = remoteUnknown
+        ? 'SSH channel closed; remote execution state unknown'
+        : run.status === 'failed'
+          ? `Failed (exit ${exit.exitCode})`
+          : run.status;
       for (const conversation of state.conversations.values()) {
         // Completed conversations stay completed if a sibling or the transport later fails.
         if (['running', 'waiting'].includes(conversation.conversation.status)) {
           this.finish(
             conversation,
-            state.stopped ? 'stopped' : exit.exitCode !== 0 ? 'failed' : 'done',
+            remoteUnknown
+              ? 'unknown'
+              : state.stopped
+                ? 'stopped'
+                : exit.exitCode !== 0
+                  ? 'failed'
+                  : 'done',
             run.activity,
           );
         }
@@ -406,6 +440,7 @@ export class FleetService {
 
   private onData(state: RunState, chunk: string): void {
     if (!this.runs.has(state.run.id)) return;
+    if (chunk && state.run.transport) transportOutput(state.run.transport, Date.now());
     if (state.run.mode === 'interactive') {
       // Terminal traffic cannot identify conversations. Use estimates only until a tagged integration takes over.
       const target = state.conversations.values().next().value as ConversationState;
@@ -539,7 +574,7 @@ export class FleetService {
 
   private finish(
     state: ConversationState,
-    status: 'done' | 'failed' | 'stopped',
+    status: 'done' | 'failed' | 'stopped' | 'unknown',
     activity: string,
   ): void {
     state.conversation.status = status;
@@ -551,13 +586,22 @@ export class FleetService {
       kind: status === 'failed' ? 'error' : status,
       status,
     });
-    this.clearTools(state, status === 'failed');
+    this.clearTools(state, status === 'failed' || status === 'unknown');
     clearTimeout(state.archiveTimer);
     // Keep failures and questions visible for attention; completed/stopped work goes to history.
-    if (status === 'failed' && !state.conversation.visible && !state.manuallyHidden) {
+    if (
+      (status === 'failed' || status === 'unknown') &&
+      !state.conversation.visible &&
+      !state.manuallyHidden
+    ) {
       this.setConversationVisible(state.conversation.id, true, false);
     }
-    if (status !== 'failed' && state.conversation.visible && !state.manuallyHidden) {
+    if (
+      status !== 'failed' &&
+      status !== 'unknown' &&
+      state.conversation.visible &&
+      !state.manuallyHidden
+    ) {
       state.archiveTimer = setTimeout(
         () => this.setConversationVisible(state.conversation.id, false, false),
         FLEET_ARCHIVE_DELAY,

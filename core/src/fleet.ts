@@ -22,13 +22,14 @@ export interface FleetRun {
   mode: 'task' | 'interactive';
   host: string;
   cwd: string;
-  status: 'running' | 'done' | 'failed' | 'stopped';
+  status: 'running' | 'done' | 'failed' | 'stopped' | 'unknown';
   activity: string;
   startedAt: number;
   endedAt?: number;
   exitCode?: number;
   sessionId?: string;
   output: string;
+  transport?: FleetTransport;
 }
 
 /** A character represents a conversation, which can share a process/terminal with others. */
@@ -40,7 +41,7 @@ export interface FleetConversation {
   provider: FleetProvider;
   host: string;
   cwd: string;
-  status: 'running' | 'waiting' | 'done' | 'failed' | 'stopped';
+  status: 'running' | 'waiting' | 'done' | 'failed' | 'stopped' | 'unknown';
   activity: string;
   visible: boolean;
   startedAt: number;
@@ -55,4 +56,29 @@ export interface FleetSnapshot {
   runs: Omit<FleetRun, 'output'>[];
   conversations: Omit<FleetConversation, 'output'>[];
   maxRunning: number;
+}
+
+/** Evidence about the local transport; never a remote task liveness guarantee. */
+export interface FleetTransport {
+  kind: 'local' | 'ssh';
+  state: 'connecting' | 'open' | 'output-observed' | 'closed';
+  remoteState: 'unknown' | 'exited';
+  lastOutputAt?: number;
+  reason?: 'local-stop' | 'ssh-exit-255' | 'process-exit';
+}
+export interface FleetDiagnostic {
+  profileId: string;
+  checkedAt: number;
+  connection: 'confirmed' | 'unknown';
+  cwd: 'available' | 'unavailable' | 'unknown';
+  executable: 'available' | 'unavailable' | 'unknown';
+  reason:
+    | 'ok'
+    | 'timeout'
+    | 'cwd-unavailable'
+    | 'executable-unavailable'
+    | 'host-key-unverified'
+    | 'authentication-failed'
+    | 'connection-unconfirmed'
+    | 'unknown';
 }

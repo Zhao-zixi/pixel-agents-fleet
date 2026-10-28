@@ -21,6 +21,19 @@ export function registerFleetRoutes(
     )
       return reply.code(403).send({ error: 'Untrusted origin or host' });
   };
+  app.post<{ Params: { id: string } }>(
+    '/api/fleet/profiles/:id/diagnose',
+    { preHandler: authorize },
+    async (req, reply) => {
+      try {
+        return await fleet.diagnose(req.params.id);
+      } catch (error) {
+        return reply
+          .code(400)
+          .send({ error: error instanceof Error ? error.message : 'Diagnostic failed' });
+      }
+    },
+  );
   app.get('/api/fleet', { preHandler: authorize }, async () => fleet.snapshot());
   app.get('/api/fleet/timeline', { preHandler: authorize }, async () => fleet.timeline.snapshot());
   app.get<{ Params: { id: string } }>(
