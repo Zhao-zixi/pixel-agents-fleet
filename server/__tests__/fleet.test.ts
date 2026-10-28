@@ -63,7 +63,16 @@ function harness(profiles: FleetProfile[] = [profile]) {
   const store = new AgentStateStore();
   const broadcasts: Record<string, unknown>[] = [];
   store.on('broadcast', (m) => broadcasts.push(m));
-  const fleet = new FleetService(profiles, store, pty);
+  const fleet = new FleetService(profiles, store, pty, undefined, {}, (p) => ({
+    status: 'unavailable',
+    host: p.ssh ?? 'local',
+    root: p.cwd,
+    key: `test:${p.id}`,
+    capturedAt: Date.now(),
+    files: [],
+    truncated: false,
+    reason: 'Workspace observation mocked; no external commands in protocol tests',
+  }));
   cleanup.push(() => fleet.dispose());
   return { children, store, fleet, pty, broadcasts };
 }

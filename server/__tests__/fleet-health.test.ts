@@ -103,7 +103,16 @@ describe('Fleet SSH health evidence', () => {
       moduleId: 'fake',
       reason: null,
     }));
-    const fleet = new FleetService([profile], new AgentStateStore(), pty);
+    const fleet = new FleetService([profile], new AgentStateStore(), pty, undefined, {}, (p) => ({
+      status: 'unavailable',
+      host: p.ssh ?? 'local',
+      root: p.cwd,
+      key: `test:${p.id}`,
+      capturedAt: Date.now(),
+      files: [],
+      truncated: false,
+      reason: 'Workspace observation mocked; no external commands in protocol tests',
+    }));
     const id = fleet.launch('remote', 'task');
     const send = (conversationId: string, event: unknown) =>
       onData(JSON.stringify({ type: 'fleet.event', conversationId, event }) + '\n');

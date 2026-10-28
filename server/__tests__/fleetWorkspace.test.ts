@@ -95,6 +95,30 @@ describe('read-only Fleet workspace observations', () => {
     expect(JSON.stringify(current)).not.toContain('SECRET_VALUE');
     expect(JSON.stringify(current)).not.toContain('root:');
   });
+  it('keeps renamed sensitive source contents hidden', () => {
+    const { cwd, git, profile } = repo();
+    writeFileSync(path.join(cwd, '.env'), 'RENAMED_SECRET_VALUE\n');
+    git('add', '.env');
+    git(
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.invalid',
+      '-c',
+      'core.hooksPath=/dev/null',
+      'commit',
+      '-m',
+      'fixture',
+    );
+    git('mv', '.env', 'ordinary.txt');
+    const current = captureWorkspace(profile);
+    expect(current.files.find((f) => f.path === 'ordinary.txt')).toMatchObject({
+      kind: 'hidden',
+      renamedFrom: '.env',
+      patch: '',
+    });
+    expect(JSON.stringify(current)).not.toContain('RENAMED_SECRET_VALUE');
+  });
   it('does not run repository clean filters or external diff commands', () => {
     const { cwd, git, profile } = repo();
     writeFileSync(path.join(cwd, '.gitattributes'), '*.txt filter=evil diff=evil\n');

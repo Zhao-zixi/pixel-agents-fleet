@@ -75,6 +75,7 @@ export class FleetService {
     private readonly pty: PtySessionManager,
     private readonly reserveClaudeSession?: (sessionId: string, cwd: string) => void,
     timelineOptions: FleetTimelineOptions = FleetTimeline.fromEnvironment(),
+    private readonly workspaceCapture: typeof captureWorkspace = captureWorkspace,
   ) {
     this.timeline = new FleetTimeline(timelineOptions);
     store.on('agentRemoved', this.onRemoved);
@@ -111,7 +112,7 @@ export class FleetService {
     const baseline = this.workspaces.get(id);
     const profile = this.profiles.find((p) => p.id === state?.run.profileId);
     if (!state || !baseline || !profile) return undefined;
-    const current = compareWorkspace(baseline, captureWorkspace(profile));
+    const current = compareWorkspace(baseline, this.workspaceCapture(profile));
     const relatedRunIds = [...this.workspaces.entries()]
       .filter(
         ([runId, item]) =>
@@ -182,7 +183,7 @@ export class FleetService {
     if (profile.provider === 'claude' && !profile.ssh)
       this.reserveClaudeSession?.(sessionId, profile.cwd);
     const id = this.store.nextAgentId.current++;
-    const baseline = captureWorkspace(profile);
+    const baseline = this.workspaceCapture(profile);
     const session = this.pty.create({ agentId: id, ...command });
     for (const eviction of evictions) this.dismiss(eviction.run.id);
 

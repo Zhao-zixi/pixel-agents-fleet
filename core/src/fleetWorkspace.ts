@@ -1,6 +1,7 @@
 /** Observed workspace changes do not establish conversation authorship. */
 export interface FleetWorkspaceFile {
   path: string;
+  renamedFrom?: string;
   index: string;
   worktree: string;
   kind: 'text' | 'binary' | 'hidden' | 'symlink' | 'unavailable';

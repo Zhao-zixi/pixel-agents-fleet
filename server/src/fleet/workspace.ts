@@ -53,23 +53,29 @@ function safeRelative(file: string): boolean {
   return (
     !!file &&
     !file.startsWith('/') &&
+    !file.includes('\\') &&
+    !/^[a-z]:/i.test(file) &&
     !file.split('/').includes('..') &&
     !/[\x00-\x1f\x7f]/.test(file)
   );
 }
 export function parseWorkspaceStatus(
   raw: string,
-): { path: string; index: string; worktree: string }[] {
+): { path: string; index: string; worktree: string; renamedFrom?: string }[] {
   const entries = raw.split('\0');
-  const result: { path: string; index: string; worktree: string }[] = [];
+  const result: { path: string; index: string; worktree: string; renamedFrom?: string }[] = [];
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     if (entry.length < 4) continue;
     const index = entry[0],
       worktree = entry[1],
       file = entry.slice(3);
-    if (index === 'R' || index === 'C' || worktree === 'R' || worktree === 'C') i++;
-    if (safeRelative(file)) result.push({ path: file, index, worktree });
+    const renamedFrom =
+      index === 'R' || index === 'C' || worktree === 'R' || worktree === 'C'
+        ? entries[++i]
+        : undefined;
+    if (safeRelative(file) && (renamedFrom === undefined || safeRelative(renamedFrom)))
+      result.push({ path: file, index, worktree, ...(renamedFrom ? { renamedFrom } : {}) });
   }
   return result;
 }
@@ -154,7 +160,11 @@ export function captureWorkspace(
         truncated: false,
       };
       try {
-        if (sensitiveWorkspacePath(entry.path)) file.kind = 'hidden';
+        if (
+          sensitiveWorkspacePath(entry.path) ||
+          (entry.renamedFrom && sensitiveWorkspacePath(entry.renamedFrom))
+        )
+          file.kind = 'hidden';
         else {
           const stage = invoke(['ls-files', '--stage', '--', entry.path], root);
           if (/^120000 /.test(stage)) file.kind = 'symlink';
