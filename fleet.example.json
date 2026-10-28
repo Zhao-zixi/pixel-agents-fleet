@@ -1,0 +1,44 @@
+[
+  {
+    "id": "local-codex",
+    "name": "本地 Codex",
+    "provider": "codex",
+    "mode": "task",
+    "cwd": "/home/you/projects/my-app"
+  },
+  {
+    "id": "remote-claude",
+    "name": "远程 Claude",
+    "provider": "claude",
+    "mode": "task",
+    "ssh": "dev-box",
+    "cwd": "/srv/projects/my-app"
+  },
+  {
+    "id": "remote-gemini",
+    "name": "远程 Gemini",
+    "provider": "gemini",
+    "mode": "task",
+    "ssh": "dev-box",
+    "cwd": "/srv/projects/my-app-tests"
+  },
+  {
+    "id": "remote-opencode",
+    "name": "远程 OpenCode 终端",
+    "provider": "opencode",
+    "mode": "interactive",
+    "ssh": "build-box",
+    "port": 2222,
+    "cwd": "/srv/projects/my-app"
+  },
+  {
+    "id": "existing-tmux",
+    "name": "已有 tmux 会话",
+    "provider": "custom",
+    "mode": "interactive",
+    "ssh": "dev-box",
+    "cwd": "/srv/projects/my-app",
+    "command": "tmux",
+    "args": ["attach-session", "-t", "agents"]
+  }
+]

@@ -1,0 +1,508 @@
+@import 'tailwindcss';
+@import '@fontsource/noto-sans-sc/400.css';
+/* Material Symbols Sharp, weight 700 (the single-weight package keeps the
+   FILL/GRAD/opsz axes variable). Imported into the base layer: the package's
+   own rules are unlayered and would otherwise outrank every Tailwind utility
+   (its font-size: 24px silently beat text-[...] sizing). */
+@import '@material-symbols/font-700/sharp.css' layer(base);
+
+@font-face {
+  font-family: 'FS Pixel Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/FSPixelSansUnicode-Regular.ttf') format('truetype');
+}
+
+:root {
+  /* Core palette */
+  --color-bg: #1e1e2e;
+  --color-bg-dark: #181828;
+  --color-bg-thumb: #2a2a3a;
+  --color-border: #4a4a6a;
+  --color-accent: #6030ff;
+  --color-accent-bright: #746fff;
+
+  /* Text */
+  --color-text: rgba(255, 255, 255, 0.9);
+  --color-text-muted: rgba(255, 255, 255, 0.5);
+
+  /* Buttons */
+  --color-btn-bg: rgb(53, 52, 69);
+  --color-btn-hover: rgb(78, 75, 104);
+  --color-active-bg: rgb(44, 43, 109);
+
+  /* Semantic */
+  --color-reset-text: #ecc;
+  --color-danger: #d14249;
+  --color-warning: #ff8d14;
+
+  /* Status */
+  --color-status-permission: #cca700;
+  --color-status-active: #3794ff;
+  --color-status-success: #89d185;
+  --color-status-error: var(--color-danger);
+
+  /* Shadow */
+  --shadow-pixel: 2px 2px 0px #0a0a14;
+
+  /* Non-utility values */
+  --vignette: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.6) 100%);
+  --btn-disabled-opacity: 0.35;
+}
+
+@theme inline {
+  /* 1px base so Tailwind spacing maps directly to pixels (pixel-art project) */
+  --spacing: 1px;
+
+  --font-pixel: 'FS Pixel Sans', sans-serif;
+
+  /* Text sizes (pixel-art scale, base = 22px) */
+  --text-*: initial;
+  --text-2xs: 16px;
+  --text-xs: 18px;
+  --text-sm: 20px;
+  --text-base: 22px;
+  --text-lg: 26px;
+  --text-xl: 30px;
+  --text-2xl: 36px;
+  --text-3xl: 44px;
+  --text-4xl: 52px;
+  --text-5xl: 64px;
+
+  /* Colors — reference :root vars so VS Code shows swatches */
+  --color-bg: var(--color-bg);
+  --color-bg-dark: var(--color-bg-dark);
+  --color-bg-thumb: var(--color-bg-thumb);
+  --color-border: var(--color-border);
+  --color-accent: var(--color-accent);
+  --color-text: var(--color-text);
+  --color-text-muted: var(--color-text-muted);
+  --color-btn-bg: var(--color-btn-bg);
+  --color-btn-hover: var(--color-btn-hover);
+  --color-active-bg: var(--color-active-bg);
+  --color-accent-bright: var(--color-accent-bright);
+  --color-reset-text: var(--color-reset-text);
+  --color-danger: var(--color-danger);
+  --color-warning: var(--color-warning);
+  --color-status-permission: var(--color-status-permission);
+  --color-status-active: var(--color-status-active);
+  --color-status-success: var(--color-status-success);
+  --color-status-error: var(--color-status-error);
+
+  /* Shadow */
+  --shadow-pixel: var(--shadow-pixel);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    @apply m-0 w-full h-full overflow-hidden font-pixel text-base text-text;
+    /* Mobile Safari: 100% tracks the shifting URL-bar viewport; dvh follows
+       the *dynamic* viewport so the card bar hugs the real bottom edge. */
+    height: 100dvh;
+    /* No rubber-banding — the app owns all scrolling (canvas pan, xterm,
+       card bar). */
+    overscroll-behavior: none;
+    /* Whatever peeks out during keyboard show/hide or overscroll must be
+       office-dark, never browser-white. */
+    background: var(--color-bg-dark);
+  }
+
+  * {
+    @apply font-pixel;
+  }
+}
+
+@layer components {
+  /* Panel with standard pixel-art border + shadow */
+  .pixel-panel {
+    @apply bg-bg border-2 border-border rounded-none shadow-pixel;
+  }
+
+  /* Horizontal carousel for editor items */
+  .carousel {
+    @apply flex gap-8 overflow-x-auto flex-nowrap pb-2;
+  }
+
+  /* Pixel-art range slider (HSBC ColorPicker). The accent fill up to the thumb
+     is driven by the --range-fill custom property set inline per slider. */
+  .pixel-range {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 16px;
+    cursor: pointer;
+    border: 2px solid var(--color-border);
+    background: linear-gradient(
+      to right,
+      var(--color-accent) var(--range-fill, 50%),
+      var(--color-bg-dark) var(--range-fill, 50%)
+    );
+  }
+  .pixel-range::-webkit-slider-runnable-track {
+    -webkit-appearance: none;
+    height: 12px;
+    background: transparent;
+  }
+  .pixel-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 10px;
+    height: 18px;
+    margin-top: -5px;
+    background: var(--color-text);
+    border: 2px solid var(--color-border);
+    border-radius: 0;
+    box-shadow: var(--shadow-pixel);
+  }
+  .pixel-range:hover::-webkit-slider-thumb {
+    background: var(--color-accent-bright);
+  }
+  .pixel-range::-moz-range-track {
+    height: 12px;
+    background: transparent;
+  }
+  .pixel-range::-moz-range-thumb {
+    width: 10px;
+    height: 18px;
+    background: var(--color-text);
+    border: 2px solid var(--color-border);
+    border-radius: 0;
+    box-shadow: var(--shadow-pixel);
+  }
+  .pixel-range:hover::-moz-range-thumb {
+    background: var(--color-accent-bright);
+  }
+
+  /* Terminal content must be monospace: Claude Code is a full-screen TUI, and a
+     proportional face breaks its column alignment. The base layer's
+     `* { font-pixel }` applies FS Pixel Sans to every element -- including the
+     span xterm renders each cell into -- which overrides what xterm sets on its
+     own container. Re-assert the mono stack here (components layer beats base,
+     and `.xterm *` outranks `*`).
+
+     --font-terminal is set inline by TerminalPane from TERMINAL_FONT_FAMILY, so
+     the font CSS paints with is the same one xterm measured its cell grid with;
+     hard-coding a second stack here would misalign the grid the moment the two
+     drifted. Only the terminal CONTENT is mono -- the drawer chrome around it
+     stays on the pixel font. */
+  .xterm,
+  .xterm * {
+    font-family: var(--font-terminal);
+    /* iOS: no long-press callout/loupe anywhere in the terminal — a touch
+       claimed for text interaction is cancelled mid-scroll. Touch handling
+       is fully synthesized in TerminalPane. */
+    -webkit-touch-callout: none;
+  }
+
+  /* xterm's viewport owns the terminal's native scrollbar. Same pixel
+     treatment as .pixel-scrollbar below, but with a transparent track: when
+     nothing overflows (a full-screen TUI like Claude Code) no strip paints at
+     all, and with scrollback only the slim square thumb shows. */
+  .xterm .xterm-viewport::-webkit-scrollbar {
+    width: 6px;
+  }
+  .xterm .xterm-viewport::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+    background: var(--color-bg-thumb);
+    border-radius: 0;
+  }
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+    background: var(--color-accent);
+  }
+  /* Firefox fallback */
+  .xterm .xterm-viewport {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-bg-thumb) transparent;
+  }
+
+  /* Touch text selection chrome over a terminal pane. selectionOverlay.ts
+     creates and positions these, and sets --cell-h, --sel-handle-w and
+     --sel-knob on each handle from constants.ts, so the geometry it computes
+     and the shapes drawn here can't drift. */
+  /* The pill is a row of buttons: Copy (verbatim) and Copy as text. */
+  .terminal-copy-pill {
+    position: absolute;
+    z-index: 10;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .terminal-copy-pill button {
+    padding: 8px 14px;
+    font-size: 17px;
+    background: var(--color-btn-bg);
+    color: var(--color-text);
+    border: 2px solid var(--color-border);
+    border-radius: 0;
+    box-shadow: var(--shadow-pixel);
+  }
+  /* The wrapper is the touch strip centered on the selection edge (the only
+     thing that hit-tests); the bar (::before, one cell tall) and the square
+     knob (::after) are drawn inside it — knob above the start bar, below the
+     end bar. */
+  .terminal-sel-handle {
+    position: absolute;
+    z-index: 10;
+    width: var(--sel-handle-w);
+    height: calc(var(--cell-h) + var(--sel-knob));
+  }
+  .terminal-sel-handle::before,
+  .terminal-sel-handle::after {
+    content: '';
+    position: absolute;
+    background: var(--color-accent-bright);
+    pointer-events: none;
+  }
+  .terminal-sel-handle::before {
+    left: calc((var(--sel-handle-w) - 2px) / 2);
+    width: 2px;
+    height: var(--cell-h);
+  }
+  .terminal-sel-handle::after {
+    left: calc((var(--sel-handle-w) - var(--sel-knob)) / 2);
+    width: var(--sel-knob);
+    height: var(--sel-knob);
+  }
+  .terminal-sel-handle[data-handle='start']::before {
+    top: var(--sel-knob);
+  }
+  .terminal-sel-handle[data-handle='start']::after {
+    top: 0;
+  }
+  .terminal-sel-handle[data-handle='end']::before {
+    top: 0;
+  }
+  .terminal-sel-handle[data-handle='end']::after {
+    top: var(--cell-h);
+  }
+
+  /* Pulsing dot animation (DebugView, ToolOverlay) */
+  .pixel-pulse {
+    animation: pixel-pulse 1.5s ease-in-out infinite;
+  }
+
+  /* Top-anchored floating chrome (Settings, view toggle, connection pill):
+     in a Home-Screen PWA with viewport-fit=cover the page starts under the
+     iOS status bar, so the usual 8px top offset lands beneath the clock.
+     env() is 0 in browser tabs and on desktop, where this equals top-8. */
+  .mobile-safe-top {
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+  }
+
+  /* Same, for the mobile terminal pane wrappers (4px base, matches inset-4). */
+  .mobile-safe-pane-top {
+    top: calc(env(safe-area-inset-top, 0px) + 4px);
+  }
+
+  /* Scroll containers whose overflow is obvious from clipped content (the
+     mobile card bar) — a scrollbar strip would just eat row height. */
+  .no-scrollbar {
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Pixel-style thin scrollbar utility — used by the Area card folder list
+     where the mapped-folder count can exceed the card height. */
+  .pixel-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .pixel-scrollbar::-webkit-scrollbar-track {
+    background: var(--color-bg-dark);
+  }
+  .pixel-scrollbar::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 0;
+  }
+  .pixel-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: var(--color-accent);
+  }
+  /* Firefox fallback */
+  .pixel-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) var(--color-bg-dark);
+  }
+
+  /* Material Symbols defaults for this project: Sharp style (imported in
+     main.tsx at weight 700), FILL 1, GRAD 0, opsz 24. The package CSS pins
+     font-size to 24px; 1em instead, so an icon tracks the text beside it. */
+  .material-symbols-sharp {
+    font-variation-settings:
+      'FILL' 1,
+      'GRAD' 0,
+      'opsz' 24;
+    font-size: 1em;
+    line-height: 1;
+  }
+}
+
+@keyframes pixel-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* Multi-provider / SSH control panel. Shares the office's color tokens. */
+.fleet-root,
+.fleet-root * {
+  font-family: 'Noto Sans SC', system-ui, sans-serif;
+}
+
+.fleet-root {
+  font-family: 'Noto Sans SC', system-ui, sans-serif;
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 40;
+  font-size: 14px;
+}
+.fleet-panel {
+  margin-top: 8px;
+  padding: 16px;
+  width: min(400px, calc(100vw - 24px));
+  max-height: calc(100dvh - 110px);
+  overflow: auto;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 2px solid var(--color-border);
+}
+.fleet-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 18px;
+}
+.fleet-title span,
+.fleet-muted {
+  font-size: 12px;
+  opacity: 0.7;
+}
+.fleet-muted {
+  margin: 8px 0 14px;
+}
+.fleet-panel label {
+  display: block;
+  margin: 10px 0 6px;
+}
+.fleet-panel select,
+.fleet-panel textarea {
+  display: block;
+  width: 100%;
+  background: var(--color-btn-bg);
+  color: inherit;
+  border: 2px solid var(--color-border);
+  padding: 8px;
+  font: inherit;
+}
+.fleet-panel textarea {
+  resize: vertical;
+  margin-bottom: 10px;
+}
+.fleet-path {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  opacity: 0.65;
+  margin: 6px 0;
+}
+.fleet-error {
+  padding: 8px;
+  border: 1px solid currentColor;
+  margin-top: 10px;
+  white-space: pre-wrap;
+}
+.fleet-runs {
+  margin-top: 16px;
+  display: grid;
+  gap: 8px;
+}
+.fleet-run {
+  border: 2px solid var(--color-border);
+  padding: 8px;
+}
+.fleet-selected {
+  border-color: var(--color-accent);
+}
+.fleet-run-select {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.fleet-run-select small {
+  grid-column: 1/-1;
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}
+.fleet-activity {
+  max-height: 42px;
+  overflow: hidden;
+}
+.fleet-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.fleet-detail {
+  margin-top: 14px;
+}
+.fleet-detail pre {
+  font-family: 'Noto Sans SC', monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+  font-size: 12px;
+  padding: 10px;
+  background: var(--color-btn-bg);
+}
+
+.fleet-root button {
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.fleet-group-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.fleet-group-title strong {
+  overflow-wrap: anywhere;
+}
+.fleet-group-title span {
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground, #aaa);
+}
+.fleet-conversation {
+  margin-top: 10px;
+  padding: 8px;
+  border-left: 3px solid #777b9b;
+  background: #222433;
+}
+.fleet-conversation.fleet-selected {
+  border-left-color: #ac9bf2;
+  background: #303047;
+}
+.fleet-history {
+  margin-top: 16px;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+.fleet-actions {
+  flex-wrap: wrap;
+}

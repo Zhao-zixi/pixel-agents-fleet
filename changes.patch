@@ -1,0 +1,3478 @@
+diff --git a/README.fleet.zh-CN.md b/README.fleet.zh-CN.md
+new file mode 100644
+index 0000000..2a996ce
+--- /dev/null
++++ b/README.fleet.zh-CN.md
+@@ -0,0 +1,255 @@
++# Pixel Agents Fleet：多 Agent + SSH 像素办公室
++
++在 Pixel Agents 原有像素办公室上增加了独立的「多 Agent 小队」面板。支持把不同 CLI、不同项目目录、不同远程主机上的任务放在一个办公室里，每次启动一个 Agent 进程，一个进程里的多个对话可以各自对应一个小人。
++
++这是基于上游 `pixel-agents-hq/pixel-agents` 提交 `b1bafd02896d90d83457266575a1e8e5011ce997` 的修改版。保留上游 MIT 许可证与原有界面。新增小队功能在 **standalone 浏览器模式** 使用；VS Code 原有功能保留，但扩展内没有加入小队面板。
++
++## 先玩起来：无需模型、无需 SSH
++
++推荐 Node.js 22 或更新版本。Windows 建议先在 WSL2 中体验；macOS/Linux 可直接运行。源码包附带构建后的 `dist/`。
++
++```bash
++npm ci
++npm run fleet:demo
++```
++
++打开终端打印的完整 URL（保留 `?token=...`），点击左上角 **多 Agent 小队**，选择第一个「演示·一个 Agent 三个对话」，输入任意任务，**只启动一次就会看到三个小人**。演示会让接口对话完成、测试对话继续工作、审查对话等待回复；完成的小人 15 秒后收起，接口对话在第 23 秒重新工作时会以原来的身份回来。也可选择其他环境同时启动更多 Agent。所有动作均为模拟，**不会调用模型或修改你的项目文件**。
++
++## 接真实 Agent
++
++先在运行 Agent 的那台机器上安装并登录相应 CLI，确认直接运行 CLI 正常。应用使用目标机器已有的模型配置和登录状态，不需要把 API Key 填进浏览器。
++
++不带配置文件时，会提供 Claude、Codex、Gemini、OpenCode 四个本地任务配置，工作目录为启动服务的当前目录：
++
++```bash
++npm run fleet
++```
++
++更推荐复制示例，明确指定你自己的目录和主机：
++
++```bash
++cp fleet.example.json fleet.config.json
++# 编辑 fleet.config.json，替换 cwd、SSH 别名，删除不需要的条目
++npm run fleet -- --fleet fleet.config.json
++```
++
++`--fleet` 文件在启动时读取；编辑后重启服务生效。配置文件错误会直接报告，不会悄悄退回默认配置。同一个 profile 可以重复启动，生成多个独立进程分组；同时最多 24 个运行进程，保留最近最多 100 个进程分组。每个进程最多 64 个对话，全局最多 256 个对话（含历史）；达到上限后需移除已结束分组。每个进程和每个对话各保留最近 64,000 字符输出。
++
++## SSH 配置
++
++使用本机 OpenSSH，沿用 `~/.ssh/config`、密钥、ssh-agent、ProxyJump 等现有配置。示例：
++
++```sshconfig
++Host dev-box
++    HostName 192.0.2.10
++    User developer
++    IdentityFile ~/.ssh/id_ed25519
++    Port 22
++```
++
++先在本机终端手动执行 `ssh dev-box`，核对服务器指纹、完成首次连接，并确认远程登录 shell 能找到你的 CLI。然后添加：
++
++```json
++[
++  {
++    "id": "remote-codex",
++    "name": "服务器上的 Codex",
++    "provider": "codex",
++    "mode": "task",
++    "ssh": "dev-box",
++    "cwd": "/srv/projects/my-app"
++  },
++  {
++    "id": "remote-claude",
++    "name": "服务器上的 Claude",
++    "provider": "claude",
++    "mode": "task",
++    "ssh": "dev-box",
++    "cwd": "/srv/projects/my-app-review"
++  }
++]
++```
++
++远程要求 POSIX shell 和已安装的 Agent CLI；不需要部署额外的 Web 服务或打开额外端口。`cwd` 必须为绝对路径，不能写 `~/project`。远程命令通过 `sh -lc` 启动；若 CLI 不在其 PATH 中，用 `command` 填远程可执行文件的绝对路径。
++
++SSH 使用 `BatchMode=yes` 和 `StrictHostKeyChecking=yes`：需要密码、未解锁的私钥或未信任的主机将明确失败。应用不会关闭主机密钥校验。服务默认仅监听本机 `127.0.0.1`；查看小队和操作任务均需要终端打印的 token。
++
++## 两种模式
++
++| 模式          | 用法                                        | 小人状态来源                                             |
++| ------------- | ------------------------------------------- | -------------------------------------------------------- |
++| `task`        | 输入任务，启动 CLI 执行，结束后保留结果     | 解析 JSONL，按会话 ID 分配动作；进程退出结束剩余活跃对话 |
++| `interactive` | 打开 CLI 完整终端，继续聊天、审批和执行命令 | 根据终端输出估计活动；安静不代表完成                     |
++
++任务模式内置：
++
++| Provider   | 启动方式                                                      |
++| ---------- | ------------------------------------------------------------- |
++| `claude`   | `claude --output-format stream-json --verbose -p -- <prompt>` |
++| `codex`    | `codex exec --json -- <prompt>`                               |
++| `gemini`   | `gemini --output-format stream-json --prompt=<prompt>`        |
++| `opencode` | `opencode run --format json -- <prompt>`                      |
++
++默认保留 CLI 自己的权限策略，**不添加跳过审批或沙箱的参数**。任务模式中如果工具权限不足，按该 CLI 的现有配置授权，或改用 `interactive` 在终端操作。可用 `args` 数组加模型选择等 CLI 参数。Claude 另由启动器分配独立 `--session-id`，请勿在 `args` 重复指定。
++
++小队面板按 Agent 进程分组，组内每个对话拥有自己的状态、输出和会话 ID。可以收起或显示单个小人、查看对话历史、打开共享终端、停止整个 Agent、移除已结束分组。浏览器刷新不会中止进程。关闭整个服务会停止它管理的前台进程；本版任务记录只保留在服务内存中，服务重启不恢复任务。
++
++## 一个 Agent 多个对话
++
++- **一个活跃对话一个小人**。状态、工具、输出互不混用，即使两个对话的工具 ID 相同。
++- **一个进程一个共享终端**。点击组内任意小人都会打开同一个终端；界面明确标注「共享终端」。
++- 小人上方的关闭按钮、面板里的「收起小人」都只隐藏角色，**不会终止进程或其他对话**。隐藏后继续记录输出。
++- 「停止整个 Agent（N 个对话）」才会终止该组进程。已完成的对话保留完成状态，其余活跃对话标记停止。没有通用的单对话取消接口，不能把杀进程冒充取消某个对话。
++- 完成 / 停止的小人 15 秒后自动收起；失败和明确等待回复的小人保留。自动收起后收到下一轮活动会恢复原角色 ID、颜色和历史；手动收起的小人需手动显示。
++- 浏览器刷新会恢复角色状态、共享终端归属和工具动作。进程 / 对话历史目前仅驻留服务内存，服务重启不恢复。
++
++**多对话显示需要可区分的会话 ID。** 单一终端里出现多段文字不代表能可靠识别多个对话。任务模式识别顶层 `session_id`、`thread_id`、`sessionID` 或 `conversationId`。单会话允许后续事件省略 ID；一旦某个进程有多个会话，该进程的每条事件必须带 ID，否则只记入进程日志，不会猜测归属。会话 ID 在所属进程内唯一，不同进程可重用相同 ID。
++
++原生 CLI 是否会在同一进程输出多个会话取决于它自己的运行方式；本改造不会替 CLI 新建多会话能力。默认一次性 CLI 启动通常仍对应一个对话。若你自己的 Agent 在一个进程里管理多个会话，用下面的事件接口最直接。
++
++## 接入已经运行的远程 Agent
++
++若现有 Agent 在 tmux 中，可以接入该终端：
++
++```json
++{
++  "id": "remote-existing",
++  "name": "远程已有会话",
++  "provider": "custom",
++  "mode": "interactive",
++  "ssh": "dev-box",
++  "cwd": "/srv/projects/my-app",
++  "command": "tmux",
++  "args": ["attach-session", "-t", "agents"]
++}
++```
++
++tmux 的普通终端画面本身不会被自动拆成多个对话；需要额外发送带会话 ID 的事件。此时「停止」只结束 tmux 附着连接，tmux 内的任务仍继续。对于普通 SSH 启动，停止会断开远程 PTY，前台进程通常收到挂断信号；已主动脱离终端、使用 nohup 或其他会话管理器托管的进程不在停止保证范围内。SSH 断网后本次连接会标记失败；本版不自动重连和重放任务，避免重复执行。
++
++## 扩展其他 Agent
++
++`provider: "custom"` 可运行自定义命令。任务模式下，`args` 中**完整等于** `{prompt}` 的参数会替换成用户输入；不会做字符串模板或 shell 拼接展开：
++
++```json
++{
++  "id": "my-agent",
++  "name": "自己的 Agent",
++  "provider": "custom",
++  "mode": "task",
++  "cwd": "/srv/project",
++  "command": "/usr/bin/python3",
++  "args": ["/srv/agent/main.py", "--task", "{prompt}"]
++}
++```
++
++让你的程序逐行输出 JSON，可精确驱动角色：
++
++```jsonl
++{"type":"tool_start","id":"read-1","name":"Read","input":{"path":"README.md"}}
++{"type":"tool_end","id":"read-1"}
++{"type":"text","text":"任务进度或结果"}
++{"type":"done"}
++```
++
++错误使用 `{"type":"error","message":"原因"}`，并退出非零状态。普通文本会进入输出窗口。没有结构化事件的程序仍能运行，但无法提供精确的工具动作。
++
++### 自定义 Agent 的多对话事件
++
++`provider: "custom"` 的程序逐行输出以下 JSONL。同一进程可以交错输出不同 `conversationId`；`title` 可省略，用于角色和面板的显示名称：
++
++```jsonl
++{"type":"fleet.event","conversationId":"api","title":"修改接口","event":{"type":"conversation_start"}}
++{"type":"fleet.event","conversationId":"tests","title":"运行测试","event":{"type":"conversation_start"}}
++{"type":"fleet.event","conversationId":"api","event":{"type":"tool_start","id":"tool-1","name":"Edit","input":{"path":"api.ts"}}}
++{"type":"fleet.event","conversationId":"tests","event":{"type":"tool_start","id":"tool-1","name":"Bash","input":{"command":"npm test"}}}
++{"type":"fleet.event","conversationId":"api","event":{"type":"tool_end","id":"tool-1"}}
++{"type":"fleet.event","conversationId":"api","event":{"type":"text","text":"接口修改完成"}}
++{"type":"fleet.event","conversationId":"api","event":{"type":"done"}}
++{"type":"fleet.event","conversationId":"tests","event":{"type":"waiting","message":"是否重试失败测试？"}}
++```
++
++`conversation_start` / `turn_start` 表示开始新一轮，`done` 结束该对话当前轮次（不代表整个进程退出），`error` 标记该对话失败。下一轮沿用原来的 ID。`waiting` 表示明确等待输入；它只展示状态，不会代替 Agent 实现审批/回复。回复和终止能力由你的 Agent 自己提供。
++
++其他 provider 也可使用 `fleet.event` 包装，内部 `event` 应保持该 provider 的原生事件格式。对于 custom，仅需要上面这一组通用事件。通过 SSH 启动自定义程序时，JSONL 直接随 SSH 标准输出传回，不必新开端口。
++
++### 给正在运行的分组推送事件
++
++启动接口 `POST /api/fleet/runs` 返回的 `id` 是进程 ID；它也出现在面板分组标题。已有进程的集成可以使用 HTTP 事件入口（尤其适用于 `interactive` 模式的旁路遥测）：
++
++```bash
++# TOKEN 使用启动服务时打印的 token；RUN_ID 使用实际分组 ID。
++# 单条事件也可保存到文件，用 --data-binary @event.json 发送。
++curl -X POST "http://127.0.0.1:3000/api/fleet/runs/$RUN_ID/events" \
++  -H "Authorization: Bearer $TOKEN" \
++  -H 'Content-Type: application/json' \
++  --data '{"type":"fleet.event","conversationId":"api","title":"修改接口","event":{"type":"turn_start"}}'
++```
++
++请以启动日志的实际端口替换示例中的 `3000`。该示例对应 custom 分组。交互模式仍保留原始终端；收到带 ID 的遥测后，终端输出不再覆盖各对话状态。未经结构化遥测的交互进程仅显示一个活动估计小人，终端安静不会被当成完成或提问。
++
++接口均要求同一 Bearer token 和可信 Host / Origin：
++
++| 接口                                           | 用途                                     |
++| ---------------------------------------------- | ---------------------------------------- |
++| `GET /api/fleet`                               | 进程、对话、显示状态快照（不含输出正文） |
++| `GET /api/fleet/conversations/:id`             | 单个对话的独立输出                       |
++| `POST /api/fleet/conversations/:id/visibility` | `{"visible":false}` 收起、`true` 显示    |
++| `GET /api/fleet/runs/:id`                      | 进程汇总日志（包含所有对话）             |
++| `POST /api/fleet/runs/:id/events`              | 推送一条 JSON 对话事件，最大 64 KiB      |
++| `POST /api/fleet/runs/:id/stop`                | 停止整个进程                             |
++
++## 并行工作的范围
++
++这里提供多 Agent 的启动、显示、终端和生命周期管理，**没有自动的主从调度、消息总线或跨 Agent 任务依赖**。你现有的协作流程可以通过自定义命令接入。多个 Agent 改同一仓库时，建议在 profile 中为它们配置不同的 Git worktree，避免互相覆盖；应用不会替你自动创建 worktree。
++
++Claude 原有发现机制与新增小队并存。小队启动的本地 Claude 会预留会话 ID，避免被原有扫描器重复显示。任意远程机器上已经运行的所有会话不会自动扫描，需通过上述 tmux 方式或在小队中启动。
++
++## 源码与验证
++
++- `core/src/fleet.ts`：配置与任务类型。
++- `server/src/fleet/profiles.ts`：配置校验、CLI 参数、SSH 引号处理。
++- `server/src/fleet/events.ts`：四种 CLI 与自定义事件适配器。
++- `server/src/fleet/service.ts`：进程与会话映射、独立状态/输出、历史和清理。
++- `server/src/fleet/routes.ts`：鉴权后的本地 HTTP API。
++- `webview-ui/src/components/FleetPanel.tsx`：小队面板。
++- `server/__tests__/fleet.test.ts`：新增功能回归测试。
++
++重新构建：
++
++```bash
++npm run build
++```
++
++如你的容器不支持 tsx CLI 的本地 IPC，可以分别执行等价步骤：
++
++```bash
++node --import tsx scripts/generate-messages.ts
++npm run check-types
++npm run lint
++node esbuild.js
++npm run build:webview
++```
++
++验证命令：
++
++```bash
++npm run test:fleet
++npm run test:server
++npm run test:webview
++npm run test:package-contract
++# 需要 Linux + 可运行的 sshd，测试仅监听回环地址、使用临时密钥
++npm run test:fleet:ssh
++# 需要已安装的 Playwright Chromium，先构建 dist
++node --import tsx scripts/test-fleet-ui.ts
++```
++
++本次验证覆盖 22 项 Fleet 服务测试、2 项角色恢复/终端归属测试，以及浏览器中一次启动三个对话、输出隔离、共享终端、隐藏主小人后刷新恢复、等待状态、分组停止和手机布局。SSH 测试覆盖一条连接里的三个对话。验证使用真实本地 PTY、真实 OpenSSH 客户端，以及临时用户态 SSH 测试服务；Agent 输出由明确标注的模拟程序提供，没有调用收费模型。尚未连接你的服务器，也没有以你的账号验证四种 CLI 的具体安装版本、登录状态和模型权限。不同版本的 JSONL 变化可在 `events.ts` 中适配。
++
++构建、类型检查和打包契约检查通过。完整服务端回归中 746 项通过，1 项上游 CLI 的 `0.0.0.0` 监听测试因当前容器禁止读取网络接口（`uv_interface_addresses`）失败；这项未作为通过计入。前端原有 195 项与新增 2 项通过。Lint 无错误，保留上游 App.tsx 的一个 Hook 依赖警告。
++
++协议参考：
++
++- https://github.com/openai/codex/blob/main/sdk/typescript/src/events.ts
++- https://code.claude.com/docs/en/headless
++- https://geminicli.com/docs/cli/headless/
++- https://opencode.ai/docs/cli/
+diff --git a/core/asyncapi.yaml b/core/asyncapi.yaml
+index c95abbc..a4628c7 100644
+--- a/core/asyncapi.yaml
++++ b/core/asyncapi.yaml
+@@ -98,6 +98,7 @@ components:
+         - $ref: '#/components/schemas/SubagentToolPermission'
+         # Agent Teams
+         - $ref: '#/components/schemas/AgentTeamInfo'
++        - $ref: '#/components/schemas/FleetConversationInfo'
+         # Context window
+         - $ref: '#/components/schemas/AgentContextUsage'
+         # Layout
+@@ -215,6 +216,8 @@ components:
+           const: agentClosed
+         id:
+           type: integer
++        keepTerminal:
++          type: boolean
+ 
+     AgentSelected:
+       description: An agent's terminal was focused (VS Code only). UI should highlight it.
+@@ -434,6 +437,25 @@ components:
+         teamUsesTmux:
+           type: boolean
+ 
++    FleetConversationInfo:
++      description: Conversation identity and shared process terminal ownership.
++      type: object
++      additionalProperties: false
++      required: [type, id, runId, title, provider, host]
++      properties:
++        type:
++          const: fleetConversationInfo
++        id:
++          type: integer
++        runId:
++          type: integer
++        title:
++          type: string
++        provider:
++          type: string
++        host:
++          type: string
++
+     AgentContextUsage:
+       description: |
+         How much of the agent's context window is in use, as of its most recent
+diff --git a/core/src/fleet.ts b/core/src/fleet.ts
+new file mode 100644
+index 0000000..f35b6b7
+--- /dev/null
++++ b/core/src/fleet.ts
+@@ -0,0 +1,58 @@
++/** Standalone multi-provider launch profiles. Secrets belong to each host's CLI/SSH config. */
++export const FLEET_PROVIDERS = ['claude', 'codex', 'gemini', 'opencode', 'custom'] as const;
++export type FleetProvider = (typeof FLEET_PROVIDERS)[number];
++export interface FleetProfile {
++  id: string;
++  name: string;
++  provider: FleetProvider;
++  mode: 'task' | 'interactive';
++  cwd: string;
++  /** OpenSSH destination or ~/.ssh/config alias. Missing means local. */
++  ssh?: string;
++  port?: number;
++  /** Optional executable path, resolved on the target host. */
++  command?: string;
++  args?: string[];
++}
++export interface FleetRun {
++  id: number;
++  profileId: string;
++  name: string;
++  provider: FleetProvider;
++  mode: 'task' | 'interactive';
++  host: string;
++  cwd: string;
++  status: 'running' | 'done' | 'failed' | 'stopped';
++  activity: string;
++  startedAt: number;
++  endedAt?: number;
++  exitCode?: number;
++  sessionId?: string;
++  output: string;
++}
++
++/** A character represents a conversation, which can share a process/terminal with others. */
++export interface FleetConversation {
++  id: number;
++  runId: number;
++  sessionId?: string;
++  title: string;
++  provider: FleetProvider;
++  host: string;
++  cwd: string;
++  status: 'running' | 'waiting' | 'done' | 'failed' | 'stopped';
++  activity: string;
++  visible: boolean;
++  startedAt: number;
++  updatedAt: number;
++  output: string;
++}
++
++export interface FleetSnapshot {
++  available: boolean;
++  reason: string | null;
++  profiles: FleetProfile[];
++  runs: Omit<FleetRun, 'output'>[];
++  conversations: Omit<FleetConversation, 'output'>[];
++  maxRunning: number;
++}
+diff --git a/core/src/messages.ts b/core/src/messages.ts
+index cb8b57e..776bad5 100644
+--- a/core/src/messages.ts
++++ b/core/src/messages.ts
+@@ -24,6 +24,7 @@ export type ServerMessage =
+   | SubagentClear
+   | SubagentToolPermission
+   | AgentTeamInfo
++  | FleetConversationInfo
+   | AgentContextUsage
+   | LayoutLoaded
+   | FurnitureAssetsLoaded
+@@ -95,6 +96,7 @@ export interface AgentCreated {
+ export interface AgentClosed {
+   type: 'agentClosed';
+   id: number;
++  keepTerminal?: boolean;
+ }
+ 
+ export interface AgentSelected {
+@@ -194,6 +196,15 @@ export interface AgentTeamInfo {
+   teamUsesTmux?: boolean;
+ }
+ 
++export interface FleetConversationInfo {
++  type: 'fleetConversationInfo';
++  id: number;
++  runId: number;
++  title: string;
++  provider: string;
++  host: string;
++}
++
+ export interface AgentContextUsage {
+   type: 'agentContextUsage';
+   id: number;
+diff --git a/docs/licenses/NotoSansSC-OFL.txt b/docs/licenses/NotoSansSC-OFL.txt
+new file mode 100644
+index 0000000..046fc66
+--- /dev/null
++++ b/docs/licenses/NotoSansSC-OFL.txt
+@@ -0,0 +1,93 @@
++Google Inc.
++
++This Font Software is licensed under the SIL Open Font License, Version 1.1.
++This license is copied below, and is also available with a FAQ at:
++http://scripts.sil.org/OFL
++
++
++-----------------------------------------------------------
++SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
++-----------------------------------------------------------
++
++PREAMBLE
++The goals of the Open Font License (OFL) are to stimulate worldwide
++development of collaborative font projects, to support the font creation
++efforts of academic and linguistic communities, and to provide a free and
++open framework in which fonts may be shared and improved in partnership
++with others.
++
++The OFL allows the licensed fonts to be used, studied, modified and
++redistributed freely as long as they are not sold by themselves. The
++fonts, including any derivative works, can be bundled, embedded,
++redistributed and/or sold with any software provided that any reserved
++names are not used by derivative works. The fonts and derivatives,
++however, cannot be released under any other type of license. The
++requirement for fonts to remain under this license does not apply
++to any document created using the fonts or their derivatives.
++
++DEFINITIONS
++"Font Software" refers to the set of files released by the Copyright
++Holder(s) under this license and clearly marked as such. This may
++include source files, build scripts and documentation.
++
++"Reserved Font Name" refers to any names specified as such after the
++copyright statement(s).
++
++"Original Version" refers to the collection of Font Software components as
++distributed by the Copyright Holder(s).
++
++"Modified Version" refers to any derivative made by adding to, deleting,
++or substituting -- in part or in whole -- any of the components of the
++Original Version, by changing formats or by porting the Font Software to a
++new environment.
++
++"Author" refers to any designer, engineer, programmer, technical
++writer or other person who contributed to the Font Software.
++
++PERMISSION & CONDITIONS
++Permission is hereby granted, free of charge, to any person obtaining
++a copy of the Font Software, to use, study, copy, merge, embed, modify,
++redistribute, and sell modified and unmodified copies of the Font
++Software, subject to the following conditions:
++
++1) Neither the Font Software nor any of its individual components,
++in Original or Modified Versions, may be sold by itself.
++
++2) Original or Modified Versions of the Font Software may be bundled,
++redistributed and/or sold with any software, provided that each copy
++contains the above copyright notice and this license. These can be
++included either as stand-alone text files, human-readable headers or
++in the appropriate machine-readable metadata fields within text or
++binary files as long as those fields can be easily viewed by the user.
++
++3) No Modified Version of the Font Software may use the Reserved Font
++Name(s) unless explicit written permission is granted by the corresponding
++Copyright Holder. This restriction only applies to the primary font name as
++presented to the users.
++
++4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
++Software shall not be used to promote, endorse or advertise any
++Modified Version, except to acknowledge the contribution(s) of the
++Copyright Holder(s) and the Author(s) or with their explicit written
++permission.
++
++5) The Font Software, modified or unmodified, in part or in whole,
++must be distributed entirely under this license, and must not be
++distributed under any other license. The requirement for fonts to
++remain under this license does not apply to any document created
++using the Font Software.
++
++TERMINATION
++This license becomes null and void if any of the above conditions are
++not met.
++
++DISCLAIMER
++THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
++MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
++OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
++COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
++INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
++DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
++OTHER DEALINGS IN THE FONT SOFTWARE.
+diff --git a/fleet.example.json b/fleet.example.json
+new file mode 100644
+index 0000000..6296b60
+--- /dev/null
++++ b/fleet.example.json
+@@ -0,0 +1,44 @@
++[
++  {
++    "id": "local-codex",
++    "name": "本地 Codex",
++    "provider": "codex",
++    "mode": "task",
++    "cwd": "/home/you/projects/my-app"
++  },
++  {
++    "id": "remote-claude",
++    "name": "远程 Claude",
++    "provider": "claude",
++    "mode": "task",
++    "ssh": "dev-box",
++    "cwd": "/srv/projects/my-app"
++  },
++  {
++    "id": "remote-gemini",
++    "name": "远程 Gemini",
++    "provider": "gemini",
++    "mode": "task",
++    "ssh": "dev-box",
++    "cwd": "/srv/projects/my-app-tests"
++  },
++  {
++    "id": "remote-opencode",
++    "name": "远程 OpenCode 终端",
++    "provider": "opencode",
++    "mode": "interactive",
++    "ssh": "build-box",
++    "port": 2222,
++    "cwd": "/srv/projects/my-app"
++  },
++  {
++    "id": "existing-tmux",
++    "name": "已有 tmux 会话",
++    "provider": "custom",
++    "mode": "interactive",
++    "ssh": "dev-box",
++    "cwd": "/srv/projects/my-app",
++    "command": "tmux",
++    "args": ["attach-session", "-t", "agents"]
++  }
++]
+diff --git a/package-lock.json b/package-lock.json
+index 8561e88..6306aa5 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1396,6 +1396,15 @@
+         "ws": "^8.16.0"
+       }
+     },
++    "node_modules/@fontsource/noto-sans-sc": {
++      "version": "5.3.1",
++      "resolved": "https://registry.npmjs.org/@fontsource/noto-sans-sc/-/noto-sans-sc-5.3.1.tgz",
++      "integrity": "sha512-YxZ/VWAWo9FWzH08Q6fGTzIW6vYNP2TMhUFCnfhlimbhdXnWrxJLrzX3KWt2FKnV0s8XiM5vjpGHQiyFRlTj0w==",
++      "license": "OFL-1.1",
++      "funding": {
++        "url": "https://github.com/sponsors/ayuhito"
++      }
++    },
+     "node_modules/@humanfs/core": {
+       "version": "0.19.2",
+       "resolved": "https://registry.npmjs.org/@humanfs/core/-/core-0.19.2.tgz",
+@@ -11467,6 +11476,7 @@
+     "webview-ui": {
+       "version": "0.0.0",
+       "dependencies": {
++        "@fontsource/noto-sans-sc": "^5.3.1",
+         "@material-symbols/font-700": "^0.46.0",
+         "@xterm/addon-fit": "^0.10.0",
+         "@xterm/addon-web-links": "^0.11.0",
+diff --git a/package.json b/package.json
+index 135d792..1cd2c19 100644
+--- a/package.json
++++ b/package.json
+@@ -120,7 +120,11 @@
+     "test:report:open": "allure open allure-report/allure",
+     "e2e:report": "npm run test:report",
+     "vercel:prepare": "npm run test:report && node scripts/assemble-vercel-output.mjs",
+-    "knip": "knip"
++    "knip": "knip",
++    "fleet": "node dist/cli.js",
++    "fleet:demo": "node scripts/start-fleet-demo.cjs",
++    "test:fleet": "npm exec --workspace server vitest -- run __tests__/fleet.test.ts",
++    "test:fleet:ssh": "node --import tsx scripts/test-fleet-ssh.ts"
+   },
+   "devDependencies": {
+     "@asyncapi/modelina": "^5.10.1",
+diff --git a/scripts/fleet-conversations-demo.cjs b/scripts/fleet-conversations-demo.cjs
+new file mode 100644
+index 0000000..8948d74
+--- /dev/null
++++ b/scripts/fleet-conversations-demo.cjs
+@@ -0,0 +1,52 @@
++#!/usr/bin/env node
++// Offline fixture: ONE process, THREE independent conversations. No model calls.
++const send = (conversationId, title, event) =>
++  console.log(JSON.stringify({ type: 'fleet.event', conversationId, title, event }));
++const conversations = [
++  ['api', '修改接口'],
++  ['tests', '运行测试'],
++  ['review', '审查代码'],
++];
++for (const [id, title] of conversations) {
++  send(id, title, { type: 'conversation_start' });
++  send(id, title, {
++    type: 'text',
++    text: `离线模拟 · ${title} · 任务：${process.argv[2] || '体验多对话'}`,
++  });
++  send(id, title, {
++    type: 'tool_start',
++    id: 'shared-tool-id',
++    name: id === 'api' ? 'Edit' : 'Read',
++    input: { path: id + '.ts' },
++  });
++}
++setTimeout(() => {
++  send('api', '修改接口', { type: 'tool_end', id: 'shared-tool-id' });
++  send('api', '修改接口', { type: 'text', text: '接口修改完成。这段内容只属于接口对话。' });
++  send('api', '修改接口', { type: 'done' });
++}, 4000);
++setTimeout(() => {
++  send('review', '审查代码', { type: 'tool_end', id: 'shared-tool-id' });
++  send('review', '审查代码', { type: 'waiting', message: '模拟提问：要继续审查兼容性吗？' });
++}, 5000);
++setTimeout(() => {
++  send('tests', '运行测试', { type: 'tool_end', id: 'shared-tool-id' });
++  send('tests', '运行测试', { type: 'text', text: '模拟测试通过。这段内容只属于测试对话。' });
++  send('tests', '运行测试', { type: 'done' });
++}, 9000);
++// The completed api conversation leaves the office, then returns with the SAME id.
++setTimeout(() => {
++  send('api', '修改接口', { type: 'turn_start' });
++  send('api', '修改接口', {
++    type: 'tool_start',
++    id: 'follow-up',
++    name: 'Edit',
++    input: { path: 'api.ts' },
++  });
++}, 23000);
++setTimeout(() => {
++  send('api', '修改接口', { type: 'tool_end', id: 'follow-up' });
++  send('api', '修改接口', { type: 'done' });
++  send('review', '审查代码', { type: 'text', text: '模拟回复已收到，审查完成。' });
++  send('review', '审查代码', { type: 'done' });
++}, 35000);
+diff --git a/scripts/fleet-demo.cjs b/scripts/fleet-demo.cjs
+new file mode 100644
+index 0000000..ca353ae
+--- /dev/null
++++ b/scripts/fleet-demo.cjs
+@@ -0,0 +1,16 @@
++#!/usr/bin/env node
++// Offline demo fixture. This is NOT an AI model and never edits project files.
++const task = process.argv[2] || '演示任务';
++const emit = (event) => console.log(JSON.stringify(event));
++const steps = [
++  [0, { type: 'text', text: `离线演示：${task}\n这些事件来自演示脚本，不会调用模型或修改文件。` }],
++  [700, { type: 'tool_start', id: 'read-1', name: 'Read', input: { path: 'src/main.ts' } }],
++  [3500, { type: 'tool_end', id: 'read-1' }],
++  [4000, { type: 'tool_start', id: 'write-1', name: 'Edit', input: { path: 'src/main.ts' } }],
++  [8000, { type: 'tool_end', id: 'write-1' }],
++  [8500, { type: 'tool_start', id: 'test-1', name: 'Bash', input: { command: 'npm test (模拟)' } }],
++  [11500, { type: 'tool_end', id: 'test-1' }],
++  [12000, { type: 'text', text: '演示结束。换用真实 Agent 配置后，这些动作将由 CLI 事件驱动。' }],
++  [12200, { type: 'done' }],
++];
++for (const [ms, event] of steps) setTimeout(() => emit(event), ms);
+diff --git a/scripts/start-fleet-demo.cjs b/scripts/start-fleet-demo.cjs
+new file mode 100644
+index 0000000..bc2476a
+--- /dev/null
++++ b/scripts/start-fleet-demo.cjs
+@@ -0,0 +1,44 @@
++#!/usr/bin/env node
++const fs = require('fs');
++const os = require('os');
++const path = require('path');
++const { spawn } = require('child_process');
++const root = path.resolve(__dirname, '..');
++const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-fleet-demo-'));
++const config = path.join(dir, 'profiles.json');
++fs.writeFileSync(
++  config,
++  JSON.stringify([
++    {
++      id: 'multiplex',
++      name: '演示·一个 Agent 三个对话',
++      provider: 'custom',
++      mode: 'task',
++      cwd: root,
++      command: process.execPath,
++      args: [path.join(__dirname, 'fleet-conversations-demo.cjs'), '{prompt}'],
++    },
++    ...['编码员', '测试员', '审查员'].map((name, i) => ({
++      id: `demo-${i}`,
++      name: `演示·${name}`,
++      provider: 'custom',
++      mode: 'task',
++      cwd: root,
++      command: process.execPath,
++      args: [path.join(__dirname, 'fleet-demo.cjs'), '{prompt}'],
++    })),
++  ]),
++);
++console.log(
++  '离线演示模式：不会调用模型或修改项目文件。选择第一个环境，只启动一次即可看到三个对话小人；也可以同时启动其他 Agent。',
++);
++const child = spawn(
++  process.execPath,
++  [path.join(root, 'dist/cli.js'), '--fleet', config, ...process.argv.slice(2)],
++  { stdio: 'inherit', cwd: root },
++);
++for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));
++child.on('exit', (code) => {
++  fs.rmSync(dir, { recursive: true, force: true });
++  process.exitCode = code || 0;
++});
+diff --git a/scripts/test-fleet-ssh.ts b/scripts/test-fleet-ssh.ts
+new file mode 100644
+index 0000000..a938893
+--- /dev/null
++++ b/scripts/test-fleet-ssh.ts
+@@ -0,0 +1,167 @@
++/** Real loopback OpenSSH + native PTY integration. Linux, sshd + ssh-keygen required. */
++import assert from 'node:assert/strict';
++import { execFileSync, spawn } from 'node:child_process';
++import fs from 'node:fs';
++import net from 'node:net';
++import os from 'node:os';
++import path from 'node:path';
++
++import type { FleetProfile } from '../core/src/fleet.js';
++import { AgentStateStore } from '../server/src/agentStateStore.js';
++import { FleetService } from '../server/src/fleet/service.js';
++import { resolvePtyModule } from '../server/src/terminal/ptyModule.js';
++import { PtySessionManager } from '../server/src/terminal/ptySessionManager.js';
++
++async function until(check: () => boolean, label: string) {
++  const deadline = Date.now() + 15000;
++  while (!check()) {
++    if (Date.now() > deadline) throw new Error(`Timeout: ${label}`);
++    await new Promise((r) => setTimeout(r, 50));
++  }
++}
++
++async function main() {
++  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-fleet-ssh-'));
++  const reservation = net.createServer();
++  await new Promise<void>((r) => reservation.listen(0, '127.0.0.1', r));
++  const port = (reservation.address() as net.AddressInfo).port;
++  await new Promise<void>((r) => reservation.close(() => r()));
++  for (const key of ['host', 'client'])
++    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', path.join(dir, key)]);
++  const hostPublic = fs
++    .readFileSync(path.join(dir, 'host.pub'), 'utf8')
++    .trim()
++    .split(' ')
++    .slice(0, 2)
++    .join(' ');
++  fs.writeFileSync(path.join(dir, 'known_hosts'), `[127.0.0.1]:${port} ${hostPublic}\n`);
++  fs.writeFileSync(
++    path.join(dir, 'client_config'),
++    `Host fleet-loopback\n HostName 127.0.0.1\n Port ${port}\n User ${os.userInfo().username}\n IdentityFile ${dir}/client\n IdentitiesOnly yes\n UserKnownHostsFile ${dir}/known_hosts\n`,
++  );
++  fs.writeFileSync(
++    path.join(dir, 'sshd_config'),
++    `ListenAddress 127.0.0.1\nPort ${port}\nHostKey ${dir}/host\nPidFile ${dir}/pid\nAuthorizedKeysFile ${dir}/client.pub\nStrictModes no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nPermitRootLogin prohibit-password\nLogLevel ERROR\n`,
++  );
++  fs.writeFileSync(
++    path.join(dir, 'fake-agent.cjs'),
++    `
++const fs=require('fs');
++const prompt=process.argv[2];
++console.log(JSON.stringify({type:'tool_start',id:'shared-id',name:'Read',input:{path:'README.md'}}));
++console.log(JSON.stringify({type:'text',text:prompt}));
++if(prompt==='long') {
++  fs.writeFileSync(${JSON.stringify(path.join(dir, 'remote-pid'))},String(process.pid));
++  setInterval(()=>console.log(JSON.stringify({type:'text',text:'tick'})),100);
++} else setTimeout(()=>{console.log(JSON.stringify({type:'tool_end',id:'shared-id'}));console.log(JSON.stringify({type:'done'}));},250);
++`,
++  );
++  const userland = process.env.FLEET_TEST_SSH_SERVER;
++  const sshd = userland
++    ? spawn(
++        process.execPath,
++        [userland, dir, path.resolve('node_modules/@lydell/node-pty'), String(port)],
++        { stdio: ['ignore', 'ignore', 'pipe'] },
++      )
++    : spawn('/usr/sbin/sshd', ['-D', '-e', '-f', path.join(dir, 'sshd_config')], {
++        stdio: ['ignore', 'ignore', 'pipe'],
++      });
++  let sshErrors = '';
++  sshd.stderr.on('data', (b) => {
++    sshErrors += b.toString();
++  });
++  const resolution = resolvePtyModule();
++  assert(resolution.module, resolution.reason ?? 'Native PTY required');
++  const nativeModule = resolution.module;
++  const manager = new PtySessionManager(() => ({
++    ...resolution,
++    module: {
++      spawn(file, args, options) {
++        return nativeModule.spawn(
++          file,
++          file === 'ssh' ? ['-F', path.join(dir, 'client_config'), ...args] : args,
++          options,
++        );
++      },
++    },
++  }));
++  const base: FleetProfile = {
++    id: 'local',
++    name: 'Local',
++    provider: 'custom',
++    mode: 'task',
++    cwd: dir,
++    command: process.execPath,
++    args: [path.join(dir, 'fake-agent.cjs'), '{prompt}'],
++  };
++  const fleet = new FleetService(
++    [
++      base,
++      { ...base, id: 'remote', ssh: 'fleet-loopback' },
++      {
++        ...base,
++        id: 'multiplex',
++        ssh: 'fleet-loopback',
++        args: [path.resolve('scripts/fleet-conversations-demo.cjs'), '{prompt}'],
++      },
++    ],
++    new AgentStateStore(),
++    manager,
++  );
++  try {
++    await until(() => fs.existsSync(path.join(dir, 'pid')) || sshd.exitCode !== null, 'sshd start');
++    assert.equal(sshd.exitCode, null, sshErrors);
++    const prompt = "literal 'quotes'\n$(touch BAD) `touch BAD` ; & 中文";
++    const ids = ['local', 'remote', 'remote'].map((id) => fleet.launch(id, prompt));
++    await until(
++      () => ids.every((id) => fleet.get(id)?.status !== 'running'),
++      'concurrent local/SSH runs',
++    );
++    for (const id of ids) {
++      assert.equal(fleet.get(id)?.status, 'done', (fleet.get(id)?.output ?? '') + '\n' + sshErrors);
++      assert(
++        fleet.get(id)?.output.includes(prompt),
++        (fleet.get(id)?.output ?? '') + '\n' + sshErrors,
++      );
++    }
++    assert(!fs.existsSync(path.join(dir, 'BAD')), 'Shell interpolation occurred');
++    const multi = fleet.launch('multiplex', 'SSH 多对话');
++    await until(
++      () => fleet.snapshot().conversations.filter((c) => c.runId === multi).length === 3,
++      'one SSH process with 3 conversations',
++    );
++    const group = fleet.snapshot().conversations.filter((c) => c.runId === multi);
++    assert.equal(group[0].id, multi);
++    assert.equal(new Set(group.map((c) => c.sessionId)).size, 3);
++    for (const c of group) assert(fleet.getConversation(c.id)?.output.includes(c.title));
++    fleet.setConversationVisible(group[0].id, false);
++    assert(manager.has(multi), 'Hiding primary character killed SSH');
++    fleet.stop(multi);
++    await until(() => fleet.get(multi)?.status === 'stopped', 'multiplex SSH cancellation');
++    assert(group.every((c) => fleet.getConversation(c.id)?.status === 'stopped'));
++    const id = fleet.launch('remote', 'long');
++    await until(() => fs.existsSync(path.join(dir, 'remote-pid')), 'long SSH run');
++    const remotePid = Number(fs.readFileSync(path.join(dir, 'remote-pid'), 'utf8'));
++    fleet.stop(id);
++    await until(() => fleet.get(id)?.status === 'stopped', 'SSH cancellation');
++    await until(() => {
++      try {
++        return fs.readFileSync(`/proc/${remotePid}/stat`, 'utf8').split(' ')[2] === 'Z';
++      } catch {
++        return true;
++      }
++    }, 'remote foreground process terminated');
++    console.log(
++      'PASS: 3 concurrent local/SSH runs, literal Unicode/quotes/newlines, JSON events, one SSH process with 3 isolated conversations, non-destructive hiding, SSH cancellation and remote process cleanup',
++    );
++  } finally {
++    await manager.disposeAll();
++    fleet.dispose();
++    sshd.kill('SIGTERM');
++    fs.rmSync(dir, { recursive: true, force: true });
++  }
++}
++main().catch((error) => {
++  console.error(error);
++  process.exitCode = 1;
++});
+diff --git a/scripts/test-fleet-ui.ts b/scripts/test-fleet-ui.ts
+new file mode 100644
+index 0000000..3d30520
+--- /dev/null
++++ b/scripts/test-fleet-ui.ts
+@@ -0,0 +1,137 @@
++/** Browser + real local PTY smoke test; uses the explicitly labelled offline demo. */
++import assert from 'node:assert/strict';
++import path from 'node:path';
++import { chromium } from '@playwright/test';
++
++import { AgentStateStore } from '../server/src/agentStateStore.js';
++import { buildAssetCache } from '../server/src/assetReload.js';
++import { FleetService } from '../server/src/fleet/service.js';
++import { createHttpServer } from '../server/src/httpServer.js';
++import { PtySessionManager } from '../server/src/terminal/ptySessionManager.js';
++
++async function main() {
++  const root = process.cwd();
++  const store = new AgentStateStore();
++  const pty = new PtySessionManager();
++  const fleet = new FleetService(
++    ['一个 Agent 三个对话'].map((name, i) => ({
++      id: `demo-${i}`,
++      name: `演示·${name}`,
++      provider: 'custom',
++      mode: 'task',
++      cwd: root,
++      command: process.execPath,
++      args: [path.join(root, 'scripts/fleet-conversations-demo.cjs'), '{prompt}'],
++    })),
++    store,
++    pty,
++  );
++  const { app, port } = await createHttpServer({
++    embedded: false,
++    token: 'fleet-ui-test-token',
++    store,
++    ptyManager: pty,
++    fleet,
++    staticDir: path.join(root, 'dist/webview'),
++    assetCache: await buildAssetCache(path.join(root, 'dist'), []),
++  });
++  const browser = await chromium.launch({
++    executablePath: process.env.FLEET_TEST_CHROMIUM,
++    args: process.env.FLEET_TEST_CHROMIUM ? ['--no-sandbox', '--disable-dev-shm-usage'] : [],
++  });
++  const errors: string[] = [];
++  try {
++    const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
++    page.on('pageerror', (e) => errors.push(e.message));
++    const wire: Record<string, unknown>[] = [];
++    const terminalIds: number[] = [];
++    page.on('websocket', (socket) => {
++      const match = new URL(socket.url()).pathname.match(/^\/terminal\/(\d+)$/);
++      if (match) terminalIds.push(Number(match[1]));
++      else
++        socket.on('framereceived', ({ payload }) => {
++          try {
++            wire.push(JSON.parse(String(payload)));
++          } catch {
++            /* binary terminal frame */
++          }
++        });
++    });
++    await page.goto(`http://127.0.0.1:${port}/?token=fleet-ui-test-token`);
++    const intro = page.getByRole('dialog', { name: 'Welcome to Pixel Agents!' });
++    await intro.waitFor({ timeout: 5000 }).catch(() => {});
++    if (await intro.isVisible())
++      await intro.getByRole('button', { name: 'Close', exact: true }).click();
++    await page.getByRole('button', { name: '多 Agent 小队', exact: true }).click();
++    await page.locator('#fleet-prompt').fill('同一进程，三个对话');
++    await page.getByRole('button', { name: '+ 启动 Agent', exact: true }).click();
++    await page.locator('.fleet-conversation').nth(2).waitFor();
++    assert.equal(fleet.snapshot().runs.length, 1);
++    assert.equal(store.size, 3);
++    const [first, second, third] = fleet.snapshot().conversations;
++    const runId = first.runId;
++    const row = (id: number) => page.locator(`[data-conversation-id="${id}"]`);
++    assert([...store.values()].every((a) => a.activeToolIds.has('shared-tool-id')));
++    await row(second.id).locator('.fleet-run-select').click();
++    await page
++      .locator('.fleet-detail pre')
++      .getByText('离线模拟 · 运行测试', { exact: false })
++      .waitFor();
++    assert(!(await page.locator('.fleet-detail pre').innerText()).includes('离线模拟 · 修改接口'));
++    // Each sibling opens the SAME process terminal, including after the primary is hidden.
++    await row(second.id).getByRole('button', { name: '定位 / 终端', exact: true }).click();
++    await page.getByTitle('Close terminal', { exact: true }).waitFor();
++    assert(terminalIds.includes(runId));
++    assert(terminalIds.every((id) => id === runId));
++    await page.getByTitle('Close terminal', { exact: true }).click();
++    await page.getByRole('button', { name: '多 Agent 小队', exact: true }).click();
++    await row(first.id).getByRole('button', { name: '收起小人', exact: true }).click();
++    await row(first.id).waitFor({ state: 'hidden' });
++    assert(pty.has(runId));
++    assert(wire.some((m) => m.type === 'agentClosed' && m.id === runId && m.keepTerminal === true));
++    await page.reload();
++    await intro.waitFor({ timeout: 5000 }).catch(() => {});
++    if (await intro.isVisible())
++      await intro.getByRole('button', { name: 'Close', exact: true }).click();
++    await page.getByRole('button', { name: '多 Agent 小队', exact: true }).click();
++    await row(third.id).waitFor();
++    assert.equal(await page.locator('.fleet-run').count(), 1);
++    assert.equal(await page.locator('.fleet-conversation').count(), 2);
++    assert(
++      wire.some(
++        (m) => m.type === 'fleetConversationInfo' && m.id === second.id && m.runId === runId,
++      ),
++    );
++    assert(wire.some((m) => m.type === 'terminalSessionOpened' && m.agentId === runId));
++    await page.getByRole('button', { name: /历史 \/ 已收起/ }).click();
++    await row(first.id).getByRole('button', { name: '显示小人', exact: true }).click();
++    assert.equal(store.size, 3);
++    if (await intro.isVisible())
++      await intro.getByRole('button', { name: 'Close', exact: true }).click();
++    const closeTerminal = page.getByTitle('Close terminal', { exact: true });
++    if (await closeTerminal.isVisible()) await closeTerminal.click();
++    // Collect desktop screenshot with labels and all three conversation cards.
++    await page.screenshot({ path: '/tmp/pixel-fleet-desktop.png' });
++    await row(third.id).getByText('等你回复', { exact: true }).waitFor();
++    await page.getByRole('button', { name: '停止整个 Agent（3 个对话）', exact: true }).click();
++    await page.locator('.fleet-group-title').getByText('已停止', { exact: true }).waitFor();
++    assert.equal(fleet.getConversation(third.id)?.status, 'stopped');
++    await page.setViewportSize({ width: 390, height: 844 });
++    await page.screenshot({ path: '/tmp/pixel-fleet-mobile.png' });
++    const panel = await page.locator('.fleet-panel').boundingBox();
++    assert(panel && panel.x >= 0 && panel.x + panel.width <= 390);
++    assert.equal(errors.length, 0, errors.join('\n'));
++    console.log(
++      'PASS: 1 UI-launched process / 3 conversations, isolated outputs, shared terminal, hide/show, reload with hidden owner, waiting status, group stop, desktop/mobile panel, no browser errors',
++    );
++  } finally {
++    await browser.close();
++    await pty.disposeAll();
++    fleet.dispose();
++    await app.close();
++  }
++}
++main().catch((e) => {
++  console.error(e);
++  process.exitCode = 1;
++});
+diff --git a/server/__tests__/fleet.test.ts b/server/__tests__/fleet.test.ts
+new file mode 100644
+index 0000000..64ae659
+--- /dev/null
++++ b/server/__tests__/fleet.test.ts
+@@ -0,0 +1,504 @@
++import { execFileSync } from 'node:child_process';
++
++import Fastify from 'fastify';
++import { afterEach, describe, expect, it, vi } from 'vitest';
++
++import type { FleetProfile } from '../../core/src/fleet.js';
++import { resendAgentActivity } from '../src/agentActivityResend.js';
++import { AgentStateStore } from '../src/agentStateStore.js';
++import { handleClientMessage } from '../src/clientMessageHandler.js';
++import { normalizeFleetEvent } from '../src/fleet/events.js';
++import {
++  buildFleetCommand,
++  FLEET_MAX_LINE,
++  FLEET_MAX_OUTPUT,
++  parseProfiles,
++} from '../src/fleet/profiles.js';
++import { registerFleetRoutes } from '../src/fleet/routes.js';
++import { FleetService } from '../src/fleet/service.js';
++import type { IPty, PtyModule } from '../src/terminal/ptyModule.js';
++import { PtySessionManager } from '../src/terminal/ptySessionManager.js';
++
++const profile: FleetProfile = {
++  id: 'codex',
++  name: 'Coder',
++  provider: 'codex',
++  mode: 'task',
++  cwd: '/tmp',
++};
++
++class FakePty implements IPty {
++  pid = 100;
++  dataListener: (data: string) => void = () => {};
++  exitListener: (exit: { exitCode: number }) => void = () => {};
++  killed = false;
++  onData(fn: (data: string) => void) {
++    this.dataListener = fn;
++  }
++  onExit(fn: (exit: { exitCode: number }) => void) {
++    this.exitListener = fn;
++  }
++  write() {}
++  resize() {}
++  kill() {
++    this.killed = true;
++    this.exitListener({ exitCode: 129 });
++  }
++  send(event: unknown) {
++    this.dataListener(JSON.stringify(event) + '\r\n');
++  }
++}
++const cleanup: (() => void)[] = [];
++function harness(profiles: FleetProfile[] = [profile]) {
++  const children: FakePty[] = [];
++  const module: PtyModule = {
++    spawn: () => {
++      const p = new FakePty();
++      children.push(p);
++      return p;
++    },
++  };
++  const pty = new PtySessionManager(() => ({ module, moduleId: 'fake', reason: null }));
++  const store = new AgentStateStore();
++  const broadcasts: Record<string, unknown>[] = [];
++  store.on('broadcast', (m) => broadcasts.push(m));
++  const fleet = new FleetService(profiles, store, pty);
++  cleanup.push(() => fleet.dispose());
++  return { children, store, fleet, pty, broadcasts };
++}
++afterEach(() => {
++  for (const fn of cleanup.splice(0)) fn();
++  vi.useRealTimers();
++});
++
++describe('fleet profiles and SSH boundary', () => {
++  it('rejects duplicate IDs, relative remote paths, SSH option injection and NUL', () => {
++    for (const invalid of [
++      [profile, profile],
++      [{ ...profile, ssh: '-oProxyCommand=touch /tmp/bad' }],
++      [{ ...profile, ssh: 'user@host;pwd' }],
++      [{ ...profile, ssh: 'host', cwd: '~/project' }],
++      [{ ...profile, command: 'node\0bad' }],
++      [{ ...profile, port: 22 }],
++    ])
++      expect(() => parseProfiles(invalid)).toThrow();
++  });
++  it('supports SSH aliases, ports and IPv6', () => {
++    for (const ssh of ['dev-box', 'dev@server', 'dev@2001:db8::1', '[2001:db8::1]']) {
++      expect(parseProfiles([{ ...profile, ssh, port: 2222 }])[0].ssh).toBe(ssh);
++    }
++  });
++  it('transports hostile-looking args literally through both remote shells', () => {
++    const prompt = "a 'quote'\n$(printf BAD) `printf BAD` ; & 零";
++    const p: FleetProfile = {
++      ...profile,
++      provider: 'custom',
++      ssh: 'remote',
++      command: 'printf',
++      args: ['%s', '{prompt}'],
++    };
++    const cmd = buildFleetCommand(p, prompt);
++    const output = execFileSync('sh', ['-c', cmd.args.at(-1)!], { encoding: 'utf8' });
++    expect(output).toBe(prompt);
++    expect(cmd.args).toContain('StrictHostKeyChecking=yes');
++    expect(cmd.args).toContain('BatchMode=yes');
++  });
++  it('keeps task arguments separate and does not bypass CLI permissions', () => {
++    for (const provider of ['claude', 'codex', 'gemini', 'opencode'] as const) {
++      const cmd = buildFleetCommand({ ...profile, provider }, '-potential-option');
++      expect(cmd.args.join(' ')).not.toMatch(/yolo|skip-permissions|--auto/);
++      expect(cmd.args).toContain(
++        provider === 'gemini' ? '--prompt=-potential-option' : '-potential-option',
++      );
++    }
++  });
++});
++
++describe('native event adapters', () => {
++  it('reads Codex command events, text, failures and session identity', () => {
++    expect(
++      normalizeFleetEvent('codex', { type: 'thread.started', thread_id: 'thread-a' }),
++    ).toContainEqual({ kind: 'session', id: 'thread-a' });
++    expect(
++      normalizeFleetEvent('codex', {
++        type: 'item.started',
++        item: { id: '1', type: 'command_execution', command: 'ls' },
++      }),
++    ).toContainEqual({ kind: 'tool', id: '1', name: 'command_execution', detail: 'ls' });
++    expect(
++      normalizeFleetEvent('codex', { type: 'turn.failed', error: { message: 'limit' } }),
++    ).toContainEqual({ kind: 'error', message: 'limit' });
++  });
++  it('reads Claude tool use/results and does not lose explicit result failures', () => {
++    expect(
++      normalizeFleetEvent('claude', {
++        type: 'assistant',
++        message: {
++          content: [{ type: 'tool_use', id: 'c', name: 'Read', input: { file_path: 'x.ts' } }],
++        },
++      }),
++    ).toContainEqual({ kind: 'tool', id: 'c', name: 'Read', detail: 'x.ts' });
++    expect(
++      normalizeFleetEvent('claude', {
++        type: 'user',
++        message: { content: [{ type: 'tool_result', tool_use_id: 'c' }] },
++      }),
++    ).toContainEqual({ kind: 'toolEnd', id: 'c' });
++    expect(
++      normalizeFleetEvent('claude', { type: 'result', is_error: true, result: 'denied' }),
++    ).toContainEqual({ kind: 'error', message: 'denied' });
++  });
++  it('reads Gemini tools and OpenCode completed tools without mistaking a step for run completion', () => {
++    expect(
++      normalizeFleetEvent('gemini', {
++        type: 'tool_use',
++        tool_id: 'g',
++        tool_name: 'read_file',
++        parameters: { file_path: 'x' },
++      }),
++    ).toContainEqual({ kind: 'tool', id: 'g', name: 'read_file', detail: 'x' });
++    expect(
++      normalizeFleetEvent('opencode', {
++        type: 'tool_use',
++        part: { callID: 'o', tool: 'read', state: { status: 'completed', input: { path: 'x' } } },
++      }),
++    ).toContainEqual({ kind: 'toolEnd', id: 'o' });
++    expect(normalizeFleetEvent('opencode', { type: 'step_finish' })).toEqual([]);
++    expect(normalizeFleetEvent('codex', { type: 'future.event' })).toEqual([]);
++  });
++});
++
++describe('concurrent managed agents', () => {
++  it('isolates identical tool IDs between simultaneous local and SSH runs', () => {
++    const { fleet, children, store } = harness([
++      profile,
++      { ...profile, id: 'remote', ssh: 'dev-box' },
++    ]);
++    const a = fleet.launch('codex', 'one');
++    const b = fleet.launch('remote', 'two');
++    const event = { type: 'item.started', item: { id: 'same', type: 'file_change' } };
++    children[0].send(event);
++    children[1].send(event);
++    children[0].send({ type: 'item.completed', item: { id: 'same' } });
++    expect(store.get(a)?.activeToolIds.size).toBe(0);
++    expect(store.get(b)?.activeToolIds.has('same')).toBe(true);
++    fleet.stop(a);
++    expect(children[0].killed).toBe(true);
++    expect(children[1].killed).toBe(false);
++    expect(fleet.get(a)?.status).toBe('stopped');
++    expect(fleet.get(b)?.status).toBe('running');
++  });
++  it('handles split JSON, missing trailing newline and a zero-exit provider error', () => {
++    const { fleet, children, store } = harness();
++    const id = fleet.launch('codex', 'go');
++    children[0].dataListener('{"type":"item.com');
++    children[0].dataListener('pleted","item":{"type":"agent_message","text":"hello"}}\r\n');
++    children[0].dataListener('{"type":"turn.failed","error":{"message":"quota"}}');
++    children[0].exitListener({ exitCode: 0 });
++    expect(fleet.get(id)?.output).toContain('hello');
++    expect(fleet.get(id)?.status).toBe('failed');
++    expect(store.has(id)).toBe(true);
++    expect(store.get(id)?.activeToolIds.size).toBe(0);
++    fleet.dismiss(id);
++    expect(store.has(id)).toBe(false);
++  });
++  it('bounds output, recovers after oversized JSON and reports SSH failures', () => {
++    const { fleet, children } = harness();
++    const id = fleet.launch('codex', 'go');
++    children[0].dataListener('x'.repeat(FLEET_MAX_LINE + 1));
++    children[0].dataListener('\n');
++    children[0].send({ type: 'item.completed', item: { type: 'agent_message', text: 'recover' } });
++    expect(fleet.get(id)?.output).toContain('recover');
++    children[0].dataListener('text\n'.repeat(FLEET_MAX_OUTPUT));
++    expect(fleet.get(id)!.output.length).toBeLessThanOrEqual(FLEET_MAX_OUTPUT);
++    children[0].exitListener({ exitCode: 255 });
++    expect(fleet.get(id)?.status).toBe('failed');
++  });
++  it('hides a character without killing its shared process through the existing office UI', () => {
++    const { fleet, children, store } = harness();
++    const id = fleet.launch('codex', 'go');
++    handleClientMessage({ type: 'closeAgent', id }, () => {}, {
++      store,
++      fleet,
++      cache: null,
++      privileged: true,
++    });
++    expect(children[0].killed).toBe(false);
++    expect(fleet.get(id)?.status).toBe('running');
++    expect(fleet.getConversation(id)?.visible).toBe(false);
++  });
++  it('preserves done characters and suppresses fleet persistence', () => {
++    const { fleet, children, store } = harness();
++    const id = fleet.launch('codex', 'go');
++    children[0].send({ type: 'turn.completed' });
++    expect(fleet.get(id)?.status).toBe('running'); // process has not actually exited
++    children[0].exitListener({ exitCode: 0 });
++    expect(fleet.get(id)?.status).toBe('done');
++    expect(store.get(id)?.managedFleet).toBe(true);
++  });
++});
++
++describe('fleet HTTP permissions', () => {
++  it('requires token AND trusted host/origin; rejects commands outside configured profiles', async () => {
++    const { fleet, children } = harness();
++    const app = Fastify();
++    registerFleetRoutes(app, fleet, 'test-token', new Set(['localhost']));
++    const headers = { authorization: 'Bearer test-token', host: 'localhost' };
++    try {
++      expect((await app.inject({ url: '/api/fleet' })).statusCode).toBe(401);
++      expect(
++        (await app.inject({ url: '/api/fleet', headers: { ...headers, host: 'evil.test' } }))
++          .statusCode,
++      ).toBe(403);
++      expect(
++        (
++          await app.inject({
++            url: '/api/fleet',
++            headers: { ...headers, origin: 'https://evil.test' },
++          })
++        ).statusCode,
++      ).toBe(403);
++      expect((await app.inject({ url: '/api/fleet', headers })).statusCode).toBe(200);
++      expect(
++        (
++          await app.inject({
++            method: 'POST',
++            url: '/api/fleet/runs',
++            headers,
++            payload: { profileId: 'unknown', prompt: 'x' },
++          })
++        ).statusCode,
++      ).toBe(400);
++      const launch = await app.inject({
++        method: 'POST',
++        url: '/api/fleet/runs',
++        headers,
++        payload: { profileId: 'codex', prompt: 'go' },
++      });
++      expect(launch.statusCode).toBe(201);
++      expect(children.length).toBe(1);
++      const id = launch.json().id;
++      expect(
++        (await app.inject({ method: 'POST', url: `/api/fleet/runs/${id}/stop`, headers }))
++          .statusCode,
++      ).toBe(200);
++      expect(fleet.get(id)?.status).toBe('stopped');
++    } finally {
++      await app.close();
++    }
++  });
++});
++
++const custom = { ...profile, id: 'custom', provider: 'custom' as const, command: 'node' };
++const packet = (conversationId: string, event: unknown, title = conversationId) => ({
++  type: 'fleet.event',
++  conversationId,
++  title,
++  event,
++});
++
++describe('multiplexed conversations', () => {
++  it('reuses the startup character and isolates interleaved tool IDs, output and completion', () => {
++    const { fleet, children, store } = harness([custom]);
++    const run = fleet.launch('custom', 'start');
++    const first = fleet.ingest(run, packet('a', { type: 'tool_start', id: 'same', name: 'Read' }));
++    const second = fleet.ingest(run, packet('b', { type: 'tool_start', id: 'same', name: 'Edit' }));
++    expect(first).toBe(run);
++    expect(second).not.toBe(first);
++    expect(children).toHaveLength(1);
++    expect(store.size).toBe(2);
++    fleet.ingest(run, packet('a', { type: 'text', text: 'only-a' }));
++    fleet.ingest(run, packet('b', { type: 'text', text: 'only-b' }));
++    fleet.ingest(run, packet('a', { type: 'done' }));
++    expect(store.get(first!)?.activeToolIds.size).toBe(0);
++    expect(store.get(second!)?.activeToolIds.has('same')).toBe(true);
++    expect(fleet.getConversation(first!)?.output).not.toContain('only-b');
++    expect(fleet.getConversation(second!)?.output).not.toContain('only-a');
++    expect(fleet.getConversation(first!)?.status).toBe('done');
++    expect(fleet.getConversation(second!)?.status).toBe('running');
++    expect(fleet.ingest(run, packet('b', { type: 'text', text: 'again' }))).toBe(second);
++    expect(fleet.snapshot().conversations).toHaveLength(2);
++  });
++  it('scopes matching session IDs to their process and does not guess untagged events', () => {
++    const { fleet, store } = harness([custom]);
++    const a = fleet.launch('custom', 'a');
++    const b = fleet.launch('custom', 'b');
++    expect(fleet.ingest(a, packet('same', { type: 'conversation_start' }))).toBe(a);
++    expect(fleet.ingest(b, packet('same', { type: 'conversation_start' }))).toBe(b);
++    const sibling = fleet.ingest(
++      a,
++      packet('other', { type: 'tool_start', id: '1', name: 'Read' }),
++    )!;
++    expect(fleet.ingest(a, { type: 'done' })).toBeNull();
++    expect(store.get(sibling)?.activeToolIds.size).toBe(1);
++    expect(fleet.get(a)?.output).toContain('Unassigned');
++    expect(fleet.getConversation(b)?.status).toBe('running');
++  });
++  it('supports native identities and legacy untagged events for a single session', () => {
++    const { fleet, children } = harness();
++    const run = fleet.launch('codex', 'x');
++    children[0].send({ type: 'thread.started', thread_id: 'thread-1' });
++    children[0].send({ type: 'item.completed', item: { type: 'agent_message', text: 'legacy' } });
++    expect(fleet.getConversation(run)?.sessionId).toBe('thread-1');
++    expect(fleet.getConversation(run)?.output).toContain('legacy');
++    children[0].send({ type: 'turn.started', thread_id: 'thread-2' });
++    expect(fleet.snapshot().conversations).toHaveLength(2);
++  });
++  it('archives completed characters, revives the same identity, and respects manual hiding', () => {
++    vi.useFakeTimers();
++    const { fleet, store, children } = harness([custom]);
++    const run = fleet.launch('custom', 'x');
++    const id = fleet.ingest(run, packet('a', { type: 'done' }))!;
++    const palette = store.get(id)?.palette;
++    vi.advanceTimersByTime(15000);
++    expect(store.has(id)).toBe(false);
++    expect(children[0].killed).toBe(false);
++    expect(fleet.getConversation(id)?.visible).toBe(false);
++    expect(fleet.ingest(run, packet('a', { type: 'turn_start' }))).toBe(id);
++    expect(store.get(id)?.palette).toBe(palette);
++    fleet.setConversationVisible(id, false);
++    fleet.ingest(run, packet('a', { type: 'tool_start', id: 'x', name: 'Read' }));
++    expect(store.has(id)).toBe(false);
++    fleet.setConversationVisible(id, true);
++    expect(store.get(id)?.activeToolIds.has('x')).toBe(true);
++    fleet.ingest(run, packet('a', { type: 'done' }));
++    vi.advanceTimersByTime(15000);
++    fleet.ingest(run, packet('a', { type: 'text', text: 'New text-only turn' }));
++    expect(store.has(id)).toBe(true);
++    expect(fleet.getConversation(id)?.status).toBe('running');
++    fleet.setConversationVisible(id, false);
++    fleet.ingest(run, packet('a', { type: 'done' }));
++    vi.advanceTimersByTime(15000);
++    fleet.ingest(run, packet('a', { type: 'turn_start' }));
++    expect(store.has(id)).toBe(false); // completion must not undo an explicit hide
++    fleet.setConversationVisible(id, true);
++    fleet.ingest(run, packet('a', { type: 'done' }));
++    vi.advanceTimersByTime(15000);
++    fleet.ingest(run, packet('a', { type: 'waiting', message: 'Need attention' }));
++    expect(store.has(id)).toBe(true);
++  });
++  it('keeps interactive terminal silence separate from explicit waiting and stops estimates after telemetry', () => {
++    vi.useFakeTimers();
++    const { fleet, children, store } = harness([{ ...custom, mode: 'interactive' }]);
++    const run = fleet.launch('custom', '');
++    children[0].dataListener('terminal output');
++    vi.advanceTimersByTime(30000);
++    expect(fleet.getConversation(run)?.status).toBe('running');
++    expect(store.get(run)?.fleetAwaitingInput).toBe(false);
++    fleet.ingest(run, packet('a', { type: 'waiting', message: 'Approval needed' }));
++    children[0].dataListener('terminal chatter');
++    vi.advanceTimersByTime(30000);
++    expect(fleet.getConversation(run)?.status).toBe('waiting');
++    expect(store.get(run)?.fleetAwaitingInput).toBe(true);
++    expect(fleet.getConversation(run)?.output).not.toContain('chatter');
++  });
++  it('replays shared terminal metadata and waiting state; hidden owners retain a live terminal on reload', () => {
++    const { fleet, store, pty } = harness([custom]);
++    const run = fleet.launch('custom', 'x');
++    fleet.ingest(run, packet('a', { type: 'turn_start' }));
++    const sibling = fleet.ingest(run, packet('b', { type: 'waiting', message: 'Need input' }))!;
++    fleet.setConversationVisible(run, false);
++    const messages: Record<string, unknown>[] = [];
++    resendAgentActivity((m) => messages.push(m), store);
++    expect(messages).toContainEqual({
++      type: 'fleetConversationInfo',
++      id: sibling,
++      runId: run,
++      title: 'b',
++      provider: 'custom',
++      host: 'local',
++    });
++    expect(messages).toContainEqual({
++      type: 'agentStatus',
++      id: sibling,
++      status: 'waiting',
++      awaitingInput: true,
++    });
++    handleClientMessage({ type: 'webviewReady' }, (m) => messages.push(m), {
++      store,
++      fleet,
++      ptyManager: pty,
++      cache: null,
++      privileged: true,
++    });
++    expect(messages).toContainEqual({ type: 'terminalSessionOpened', agentId: run });
++    expect(store.has(run)).toBe(false);
++  });
++  it('stops every active sibling but preserves completed results', () => {
++    const { fleet } = harness([custom]);
++    const run = fleet.launch('custom', 'x');
++    fleet.ingest(run, packet('a', { type: 'done' }));
++    const b = fleet.ingest(run, packet('b', { type: 'waiting' }))!;
++    fleet.stop(run);
++    expect(fleet.getConversation(run)?.status).toBe('done');
++    expect(fleet.getConversation(b)?.status).toBe('stopped');
++    expect(fleet.get(run)?.status).toBe('stopped');
++  });
++  it('rejects malformed envelopes and bounds conversation creation', () => {
++    const { fleet, children } = harness([custom]);
++    const run = fleet.launch('custom', 'x');
++    for (const raw of [
++      { type: 'fleet.event', event: {} },
++      packet('bad\n', {}),
++      packet('valid', []),
++      packet('x'.repeat(201), {}),
++    ]) {
++      expect(() => fleet.ingest(run, raw)).toThrow();
++      children[0].send(raw); // rejected stream input must not crash the process
++    }
++    for (let i = 0; i < 64; i++) fleet.ingest(run, packet(String(i), { type: 'turn_start' }));
++    expect(() => fleet.ingest(run, packet('overflow', {}))).toThrow('Conversation limit');
++    expect(fleet.snapshot().conversations).toHaveLength(64);
++    expect(fleet.get(run)?.status).toBe('running');
++  });
++  it('authenticates ingestion and visibility APIs and keeps process cancellation separate', async () => {
++    const { fleet, children } = harness([custom]);
++    const run = fleet.launch('custom', 'x');
++    const app = Fastify();
++    registerFleetRoutes(app, fleet, 'secret', new Set(['localhost']));
++    const headers = { host: 'localhost', authorization: 'Bearer secret' };
++    try {
++      const url = `/api/fleet/runs/${run}/events`;
++      const payload = packet('first', { type: 'text', text: 'one' });
++      expect((await app.inject({ method: 'POST', url, payload })).statusCode).toBe(401);
++      expect(
++        (
++          await app.inject({
++            method: 'POST',
++            url,
++            payload,
++            headers: { ...headers, origin: 'https://evil.test' },
++          })
++        ).statusCode,
++      ).toBe(403);
++      expect(
++        (await app.inject({ method: 'POST', url, payload, headers })).json().conversationId,
++      ).toBe(run);
++      expect(
++        (await app.inject({ method: 'POST', url, payload: { type: 'fleet.event' }, headers }))
++          .statusCode,
++      ).toBe(400);
++      const visibility = `/api/fleet/conversations/${run}/visibility`;
++      expect(
++        (await app.inject({ method: 'POST', url: visibility, payload: { visible: false } }))
++          .statusCode,
++      ).toBe(401);
++      expect(
++        (
++          await app.inject({
++            method: 'POST',
++            url: visibility,
++            payload: { visible: false },
++            headers,
++          })
++        ).statusCode,
++      ).toBe(200);
++      expect(children[0].killed).toBe(false);
++      const detail = await app.inject({ url: `/api/fleet/conversations/${run}`, headers });
++      expect(detail.json().output).toContain('one');
++      expect(detail.json().visible).toBe(false);
++    } finally {
++      await app.close();
++    }
++  });
++});
+diff --git a/server/src/agentActivityResend.ts b/server/src/agentActivityResend.ts
+index f0027a5..7b06be5 100644
+--- a/server/src/agentActivityResend.ts
++++ b/server/src/agentActivityResend.ts
+@@ -16,6 +16,8 @@ export function resendAgentActivity(
+   store: AgentStateStore,
+ ): void {
+   for (const [id, agent] of store) {
++    if (agent.fleetConversation)
++      send({ type: 'fleetConversationInfo', id, ...agent.fleetConversation });
+     // 1. Team metadata first — webview uses this to route tool messages correctly.
+     // Derived teams (named background spawns) have a name and a lead link but NO
+     // teamName, so gate on any team field.
+@@ -72,6 +74,7 @@ export function resendAgentActivity(
+         type: 'agentStatus',
+         id,
+         status: 'waiting',
++        awaitingInput: agent.fleetAwaitingInput,
+       });
+     }
+ 
+diff --git a/server/src/agentStateStore.ts b/server/src/agentStateStore.ts
+index b695706..d753a8d 100644
+--- a/server/src/agentStateStore.ts
++++ b/server/src/agentStateStore.ts
+@@ -155,7 +155,7 @@ export class AgentStateStore {
+       // Background-spawn children are derived state: the 1s scan re-materializes
+       // them from sidecars after a restore. Persisting them would resurrect
+       // immortal characters whose completion signal never comes.
+-      if (agent.spawnToolUseId) continue;
++      if (agent.spawnToolUseId || agent.managedFleet) continue;
+       persisted.push({
+         id: agent.id,
+         sessionId: agent.sessionId,
+diff --git a/server/src/cli.ts b/server/src/cli.ts
+index 0df5b3b..234a205 100644
+--- a/server/src/cli.ts
++++ b/server/src/cli.ts
+@@ -32,6 +32,8 @@ import {
+   WILDCARD_HOSTNAMES,
+ } from './constants.js';
+ import { FileStateAdapter } from './fileStateAdapter.js';
++import { loadProfiles } from './fleet/profiles.js';
++import { FleetService } from './fleet/service.js';
+ import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
+ import { PixelAgentsServer } from './server.js';
+ import { PtySessionManager } from './terminal/ptySessionManager.js';
+@@ -53,6 +55,7 @@ export interface CliArgs {
+   allowedHosts: string[];
+   /** --rotate-token: replace the persisted server token before starting. */
+   rotateToken: boolean;
++  fleet?: string;
+ }
+ 
+ /** Thrown by parseArgs on an invalid --port. Kept separate from process.exit so
+@@ -98,6 +101,10 @@ export function parseArgs(argv: string[]): CliArgs {
+       }
+       args.allowedHosts.push(raw as string);
+       i++;
++    } else if (argv[i] === '--fleet') {
++      if (!argv[i + 1] || argv[i + 1].startsWith('--'))
++        throw new CliArgsError('Missing --fleet JSON file');
++      args.fleet = path.resolve(argv[++i]);
+     } else if (argv[i] === '--rotate-token') {
+       args.rotateToken = true;
+     } else if (argv[i] === '--no-terminal') {
+@@ -106,6 +113,7 @@ export function parseArgs(argv: string[]): CliArgs {
+       console.log(`Usage: pixel-agents [options]
+ 
+ Options:
++  --fleet <file>        JSON profiles for multiple local / SSH agents
+   --port, -p <number>   Port to listen on (default: OS-assigned ephemeral port)
+   --host <string>       Host to bind to (default: 127.0.0.1)
+   --allowed-host <name> Also accept the tokened URL at this host name, e.g. a
+@@ -245,9 +253,15 @@ async function main(): Promise<void> {
+   try {
+     // Create runtime first (before server.start, so we can pass it in)
+     const runtime = new AgentRuntime(store, claudeProvider);
++    const fleet = new FleetService(loadProfiles(args.fleet), store, ptyManager, (id, cwd) => {
++      for (const dir of claudeProvider.getSessionDirs?.(cwd) ?? []) {
++        runtime.knownJsonlFiles.add(path.join(dir, `${id}.jsonl`));
++      }
++    });
+ 
+     // Wire hook events: HTTP POST -> runtime -> hookEventHandler -> agents
+     server.onHookEvent((providerId, event) => {
++      if (fleet.ownsSession(event.session_id)) return;
+       runtime.handleHookEvent(providerId, event);
+     });
+ 
+@@ -329,6 +343,7 @@ async function main(): Promise<void> {
+     };
+ 
+     const config = await server.start({
++      fleet,
+       store,
+       runtime,
+       embedded: false,
+@@ -427,6 +442,7 @@ async function main(): Promise<void> {
+       // wait for them: exiting now would cancel the SIGKILL escalation and
+       // leave a child that ignores SIGHUP orphaned on a dead server.
+       await ptyManager.disposeAll();
++      fleet.dispose();
+       runtime.dispose();
+       server.stop();
+       process.exit(0);
+diff --git a/server/src/clientMessageHandler.ts b/server/src/clientMessageHandler.ts
+index d40cfd6..0c959ef 100644
+--- a/server/src/clientMessageHandler.ts
++++ b/server/src/clientMessageHandler.ts
+@@ -19,6 +19,7 @@ import {
+   listDirectories,
+ } from './directories.js';
+ import { collectDirectorySuggestions } from './directorySuggestions.js';
++import type { FleetService } from './fleet/service.js';
+ import { hostDirectory } from './hostDirectory.js';
+ import { readLayoutFromFile, writeLayoutToFile } from './layoutPersistence.js';
+ import type { ConsentEffects } from './providers/hook/consentExecutor.js';
+@@ -74,6 +75,7 @@ export interface ClientMessageContext {
+   /** PTY terminals for standalone-launched agents. Absent in VS Code embedded
+    *  mode, where the editor owns terminal lifecycle. */
+   ptyManager?: PtySessionManager;
++  fleet?: FleetService;
+ }
+ 
+ // ── Setting key constants (mirror adapters/vscode/constants.ts) ──
+@@ -164,6 +166,10 @@ export function handleClientMessage(
+       // then remove). removeAgent fires agentRemoved, which httpServer maps to
+       // an agentClosed broadcast.
+       const id = msg.id as number;
++      if (ctx.fleet?.getConversation(id)) {
++        ctx.fleet.setConversationVisible(id, false);
++        break;
++      }
+       const agent = store.get(id);
+       if (agent && runtime) {
+         // dispose() is a no-op for agents with no terminal, so this is safe for
+@@ -633,7 +639,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
+   // on connect. Privileged connections only: an untokened client was told the
+   // terminal is unavailable and could not attach anyway.
+   if (ctx.ptyManager && ctx.privileged) {
+-    for (const id of agentIds) {
++    for (const id of new Set([...agentIds, ...(ctx.fleet?.liveRunIds() ?? [])])) {
+       if (ctx.ptyManager.has(id)) {
+         send({ type: 'terminalSessionOpened', agentId: id });
+       }
+diff --git a/server/src/fleet/events.ts b/server/src/fleet/events.ts
+new file mode 100644
+index 0000000..ee7f75a
+--- /dev/null
++++ b/server/src/fleet/events.ts
+@@ -0,0 +1,164 @@
++import type { FleetProvider } from '../../../core/src/fleet.js';
++import { FLEET_MAX_SESSION_ID } from './profiles.js';
++
++export type FleetEvent =
++  | { kind: 'tool'; id: string; name: string; detail: string }
++  | { kind: 'toolEnd'; id: string }
++  | { kind: 'text'; text: string }
++  | { kind: 'error'; message: string }
++  | { kind: 'session'; id: string }
++  | { kind: 'turnStart' }
++  | { kind: 'waiting'; message: string }
++  | { kind: 'done' };
++
++function obj(x: unknown): Record<string, unknown> {
++  return x && typeof x === 'object' ? (x as Record<string, unknown>) : {};
++}
++function str(x: unknown): string {
++  return typeof x === 'string' ? x : '';
++}
++function detail(x: unknown): string {
++  const input = obj(x);
++  return str(input.file_path ?? input.path ?? input.command ?? input.pattern ?? input.query).slice(
++    0,
++    200,
++  );
++}
++
++/** Pure per-provider adapters. Unknown events are ignored, never interpreted as completion. */
++export function normalizeFleetEvent(provider: FleetProvider, raw: unknown): FleetEvent[] {
++  const r = obj(raw);
++  const type = r.type;
++  const events: FleetEvent[] = [];
++  const session = str(r.session_id ?? r.sessionID ?? r.thread_id ?? r.conversationId);
++  if (session) events.push({ kind: 'session', id: session });
++  const tool = (id: unknown, name: unknown, input: unknown) => {
++    if (typeof id === 'string')
++      events.push({ kind: 'tool', id, name: str(name) || 'Tool', detail: detail(input) });
++  };
++  if (provider === 'codex') {
++    if (type === 'turn.started') events.push({ kind: 'turnStart' });
++    const item = obj(r.item);
++    if (type === 'item.started' && !['agent_message', 'reasoning'].includes(str(item.type)))
++      tool(item.id, item.type, item);
++    if (type === 'item.completed') {
++      if (typeof item.id === 'string') events.push({ kind: 'toolEnd', id: item.id });
++      if (item.type === 'agent_message') events.push({ kind: 'text', text: str(item.text) });
++    }
++    if (type === 'turn.completed') events.push({ kind: 'done' });
++    if (type === 'error' || type === 'turn.failed')
++      events.push({
++        kind: 'error',
++        message: str(r.message ?? obj(r.error).message) || 'Codex failed',
++      });
++  } else if (provider === 'claude') {
++    const content = obj(r.message).content;
++    if (Array.isArray(content))
++      for (const part of content) {
++        const c = obj(part);
++        if (c.type === 'tool_use') tool(c.id, c.name, c.input);
++        if (c.type === 'tool_result' && typeof c.tool_use_id === 'string')
++          events.push({ kind: 'toolEnd', id: c.tool_use_id });
++        if (c.type === 'text' && type === 'assistant')
++          events.push({ kind: 'text', text: str(c.text) });
++      }
++    if (type === 'result')
++      events.push(
++        r.is_error
++          ? { kind: 'error', message: str(r.result) || JSON.stringify(r.errors ?? r.subtype) }
++          : { kind: 'done' },
++      );
++  } else if (provider === 'gemini') {
++    if (type === 'tool_use') tool(r.tool_id, r.tool_name, r.parameters);
++    if (type === 'tool_result' && typeof r.tool_id === 'string')
++      events.push({ kind: 'toolEnd', id: r.tool_id });
++    if (type === 'message' && r.role === 'assistant')
++      events.push({ kind: 'text', text: str(r.content) });
++    if (type === 'result')
++      events.push(
++        r.status === 'error' || r.error
++          ? { kind: 'error', message: str(obj(r.error).message) || 'Gemini failed' }
++          : { kind: 'done' },
++      );
++    if (type === 'error')
++      events.push({
++        kind: 'error',
++        message: str(r.message ?? obj(r.error).message) || 'Gemini error',
++      });
++  } else if (provider === 'opencode') {
++    const part = obj(r.part);
++    if (type === 'text') events.push({ kind: 'text', text: str(part.text) });
++    if (type === 'tool_use') {
++      tool(part.callID ?? part.id, part.tool, obj(part.state).input);
++      if (['completed', 'error'].includes(str(obj(part.state).status)))
++        events.push({ kind: 'toolEnd', id: str(part.callID ?? part.id) });
++    }
++    if (type === 'error')
++      events.push({
++        kind: 'error',
++        message: str(obj(obj(r.error).data).message ?? obj(r.error).message) || 'OpenCode failed',
++      });
++    // step_finish ends ONE model step, not the whole run. Process exit is authoritative.
++  } else {
++    if (type === 'conversation_start' || type === 'turn_start') events.push({ kind: 'turnStart' });
++    if (type === 'waiting')
++      events.push({ kind: 'waiting', message: str(r.message) || 'Waiting for input' });
++    if (type === 'tool_start') tool(r.id, r.name, r.input);
++    if (type === 'tool_end' && typeof r.id === 'string') events.push({ kind: 'toolEnd', id: r.id });
++    if (type === 'text') events.push({ kind: 'text', text: str(r.text) });
++    if (type === 'error') events.push({ kind: 'error', message: str(r.message) || 'Agent failed' });
++    if (type === 'done') events.push({ kind: 'done' });
++  }
++  return events;
++}
++
++export interface FleetPacket {
++  conversationId?: string;
++  title?: string;
++  events: FleetEvent[];
++}
++
++/** Explicit envelopes make interleaved streams unambiguous. Never guess from tool IDs. */
++export function parseFleetPacket(provider: FleetProvider, raw: unknown): FleetPacket {
++  const record = obj(raw);
++  const envelope = record.type === 'fleet.event';
++  if (
++    envelope &&
++    (!record.event || typeof record.event !== 'object' || Array.isArray(record.event))
++  ) {
++    throw new Error('fleet.event needs an event object');
++  }
++  const payload = envelope ? obj(record.event) : record;
++  const suppliedId = envelope
++    ? record.conversationId
++    : (payload.conversationId ?? payload.session_id ?? payload.sessionID ?? payload.thread_id);
++  if (
++    (envelope && suppliedId === undefined) ||
++    (suppliedId !== undefined &&
++      (typeof suppliedId !== 'string' ||
++        !suppliedId.trim() ||
++        suppliedId.length > FLEET_MAX_SESSION_ID ||
++        /[\x00-\x1f]/.test(suppliedId)))
++  ) {
++    throw new Error('Invalid conversationId / session ID');
++  }
++  const title = record.title;
++  if (
++    title !== undefined &&
++    (typeof title !== 'string' || title.length > FLEET_MAX_SESSION_ID || /[\x00-\x1f]/.test(title))
++  ) {
++    throw new Error('Invalid conversation title');
++  }
++  return {
++    conversationId: suppliedId as string | undefined,
++    title: typeof title === 'string' ? title : undefined,
++    events: normalizeFleetEvent(provider, payload).filter((event) => event.kind !== 'session'),
++  };
++}
++
++/** Normalize animation categories without coupling the office to every CLI's tool vocabulary. */
++export function animationTool(name: string): string {
++  if (/read|search|glob|grep|list|web|fetch/i.test(name)) return 'Read';
++  if (/edit|write|patch|file_change/i.test(name)) return 'Edit';
++  return 'Bash';
++}
+diff --git a/server/src/fleet/profiles.ts b/server/src/fleet/profiles.ts
+new file mode 100644
+index 0000000..45ea264
+--- /dev/null
++++ b/server/src/fleet/profiles.ts
+@@ -0,0 +1,149 @@
++import * as fs from 'node:fs';
++import * as path from 'node:path';
++
++import { FLEET_PROVIDERS, type FleetProfile } from '../../../core/src/fleet.js';
++
++export const FLEET_MAX_PROMPT = 16_000;
++export const FLEET_MAX_RUNNING = 24;
++export const FLEET_MAX_HISTORY = 100;
++export const FLEET_MAX_OUTPUT = 64_000;
++export const FLEET_MAX_LINE = 1_048_576;
++export const FLEET_ACTIVITY_TIMEOUT = 3000;
++export const FLEET_ARCHIVE_DELAY = 15_000;
++export const FLEET_MAX_CONVERSATIONS = 256;
++export const FLEET_MAX_CONVERSATIONS_PER_RUN = 64;
++export const FLEET_MAX_SESSION_ID = 200;
++
++function safeString(value: unknown, field: string): string {
++  if (typeof value !== 'string' || !value.trim() || value.includes('\0')) {
++    throw new Error(`Invalid fleet profile ${field}`);
++  }
++  return value;
++}
++
++export function parseProfiles(value: unknown): FleetProfile[] {
++  if (!Array.isArray(value) || value.length > FLEET_MAX_HISTORY) {
++    throw new Error('Fleet config must be an array of at most 100 profiles');
++  }
++  const ids = new Set<string>();
++  return value.map((raw: unknown) => {
++    if (!raw || typeof raw !== 'object') throw new Error('Invalid fleet profile');
++    const p = raw as Record<string, unknown>;
++    const id = safeString(p.id, 'id');
++    if (!/^[a-zA-Z0-9_-]+$/.test(id) || ids.has(id))
++      throw new Error(`Invalid/duplicate profile id: ${id}`);
++    ids.add(id);
++    if (!FLEET_PROVIDERS.includes(p.provider as FleetProfile['provider']))
++      throw new Error(`Unknown provider: ${String(p.provider)}`);
++    if (p.mode !== undefined && p.mode !== 'task' && p.mode !== 'interactive')
++      throw new Error('Invalid fleet mode');
++    const profile: FleetProfile = {
++      id,
++      name: safeString(p.name, 'name'),
++      provider: p.provider as FleetProfile['provider'],
++      cwd: safeString(p.cwd, 'cwd'),
++      mode: p.mode === 'interactive' ? 'interactive' : 'task',
++    };
++    if (p.ssh !== undefined) {
++      const host = safeString(p.ssh, 'ssh');
++      // No options, shell metacharacters, whitespace, or multiple @ separators.
++      if (!/^(?:[a-zA-Z0-9_][a-zA-Z0-9_.-]*@)?[a-zA-Z0-9_\[][a-zA-Z0-9_.:\[\]-]*$/.test(host))
++        throw new Error('Invalid SSH destination');
++      profile.ssh = host;
++      if (!profile.cwd.startsWith('/')) throw new Error('SSH cwd must be an absolute POSIX path');
++    } else if (!path.isAbsolute(profile.cwd)) throw new Error('Local cwd must be absolute');
++    if (p.port !== undefined) {
++      if (
++        !profile.ssh ||
++        typeof p.port !== 'number' ||
++        !Number.isInteger(p.port) ||
++        p.port < 1 ||
++        p.port > 65535
++      )
++        throw new Error('Invalid SSH port');
++      profile.port = p.port;
++    }
++    if (p.command !== undefined) {
++      profile.command = safeString(p.command, 'command');
++      if (profile.command.startsWith('-')) throw new Error('Executable cannot start with -');
++    }
++    if (p.args !== undefined) {
++      if (
++        !Array.isArray(p.args) ||
++        !p.args.every((a) => typeof a === 'string' && !a.includes('\0'))
++      )
++        throw new Error('args must be a string array');
++      profile.args = p.args as string[];
++    }
++    if (profile.provider === 'custom' && !profile.command)
++      throw new Error('Custom profiles need command');
++    return profile;
++  });
++}
++
++export function loadProfiles(file?: string): FleetProfile[] {
++  if (file) return parseProfiles(JSON.parse(fs.readFileSync(file, 'utf8')));
++  return FLEET_PROVIDERS.filter((p) => p !== 'custom').map((provider) => ({
++    id: provider,
++    name: provider,
++    provider,
++    mode: 'task',
++    cwd: process.cwd(),
++  }));
++}
++
++/** POSIX shell quoting, used ONLY on the remote side of OpenSSH. */
++export function shellQuote(s: string): string {
++  return "'" + s.replace(/'/g, "'\\''") + "'";
++}
++
++export function buildFleetCommand(profile: FleetProfile, prompt: string) {
++  if (prompt.length > FLEET_MAX_PROMPT || prompt.includes('\0'))
++    throw new Error('Task is too long or contains NUL');
++  if (profile.mode === 'task' && !prompt.trim()) throw new Error('A task prompt is required');
++  const extra = profile.args ?? [];
++  let args: string[] = extra;
++  if (profile.mode === 'task') {
++    switch (profile.provider) {
++      case 'claude':
++        args = ['--output-format', 'stream-json', '--verbose', ...extra, '-p', '--', prompt];
++        break;
++      case 'codex':
++        args = ['exec', '--json', ...extra, '--', prompt];
++        break;
++      case 'gemini':
++        args = ['--output-format', 'stream-json', ...extra, `--prompt=${prompt}`];
++        break;
++      case 'opencode':
++        args = ['run', '--format', 'json', ...extra, '--', prompt];
++        break;
++      case 'custom':
++        args = extra.map((a) => (a === '{prompt}' ? prompt : a));
++        break;
++    }
++  }
++  const command = profile.command ?? profile.provider;
++  if (!profile.ssh) return { command, args, cwd: profile.cwd };
++  const remote = `cd ${shellQuote(profile.cwd)} && exec ${[command, ...args].map(shellQuote).join(' ')}`;
++  return {
++    command: 'ssh',
++    args: [
++      '-tt',
++      '-o',
++      'BatchMode=yes',
++      '-o',
++      'StrictHostKeyChecking=yes',
++      '-o',
++      'ConnectTimeout=10',
++      '-o',
++      'ServerAliveInterval=15',
++      '-o',
++      'ServerAliveCountMax=3',
++      ...(profile.port ? ['-p', String(profile.port)] : []),
++      '--',
++      profile.ssh,
++      `sh -lc ${shellQuote(remote)}`,
++    ],
++    cwd: process.cwd(),
++  };
++}
+diff --git a/server/src/fleet/routes.ts b/server/src/fleet/routes.ts
+new file mode 100644
+index 0000000..f0b2298
+--- /dev/null
++++ b/server/src/fleet/routes.ts
+@@ -0,0 +1,124 @@
++import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
++
++import { bearerTokenValid, isAllowedWebSocketOrigin, normalizeHostname } from '../wsAuth.js';
++import { FLEET_MAX_PROMPT } from './profiles.js';
++import type { FleetService } from './service.js';
++
++export function registerFleetRoutes(
++  app: FastifyInstance,
++  fleet: FleetService,
++  token: string,
++  hosts: ReadonlySet<string>,
++): void {
++  const authorize = async (req: FastifyRequest, reply: FastifyReply) => {
++    if (!bearerTokenValid(req.headers.authorization, token))
++      return reply.code(401).send({ error: 'Open the tokened URL printed by the server' });
++    const host = normalizeHostname(req.headers.host);
++    if (
++      !host ||
++      !hosts.has(host) ||
++      !isAllowedWebSocketOrigin(req.headers.origin, req.headers.host)
++    )
++      return reply.code(403).send({ error: 'Untrusted origin or host' });
++  };
++  app.get('/api/fleet', { preHandler: authorize }, async () => fleet.snapshot());
++  app.get<{ Params: { id: string } }>(
++    '/api/fleet/conversations/:id',
++    { preHandler: authorize },
++    async (req, reply) =>
++      fleet.getConversation(Number(req.params.id)) ??
++      reply.code(404).send({ error: 'Unknown conversation' }),
++  );
++  app.post<{ Params: { id: string }; Body: { visible: boolean } }>(
++    '/api/fleet/conversations/:id/visibility',
++    {
++      preHandler: authorize,
++      schema: {
++        body: {
++          type: 'object',
++          additionalProperties: false,
++          required: ['visible'],
++          properties: { visible: { type: 'boolean' } },
++        },
++      },
++    },
++    async (req, reply) => {
++      if (!fleet.getConversation(Number(req.params.id)))
++        return reply.code(404).send({ error: 'Unknown conversation' });
++      fleet.setConversationVisible(Number(req.params.id), req.body.visible);
++      return { ok: true };
++    },
++  );
++  app.post<{ Params: { id: string }; Body: Record<string, unknown> }>(
++    '/api/fleet/runs/:id/events',
++    {
++      preHandler: authorize,
++      bodyLimit: 64 * 1024,
++      schema: { body: { type: 'object' } },
++    },
++    async (req, reply) => {
++      if (!fleet.get(Number(req.params.id))) return reply.code(404).send({ error: 'Unknown run' });
++      try {
++        return { conversationId: fleet.ingest(Number(req.params.id), req.body) };
++      } catch (error) {
++        return reply
++          .code(400)
++          .send({ error: error instanceof Error ? error.message : 'Invalid event' });
++      }
++    },
++  );
++  app.get<{ Params: { id: string } }>(
++    '/api/fleet/runs/:id',
++    { preHandler: authorize },
++    async (req, reply) => {
++      const run = fleet.get(Number(req.params.id));
++      return run ?? reply.code(404).send({ error: 'Unknown run' });
++    },
++  );
++  app.post<{ Body: { profileId: string; prompt?: string } }>(
++    '/api/fleet/runs',
++    {
++      preHandler: authorize,
++      schema: {
++        body: {
++          type: 'object',
++          additionalProperties: false,
++          required: ['profileId'],
++          properties: {
++            profileId: { type: 'string', minLength: 1 },
++            prompt: { type: 'string', maxLength: FLEET_MAX_PROMPT },
++          },
++        },
++      },
++    },
++    async (req, reply) => {
++      try {
++        return reply
++          .code(201)
++          .send({ id: fleet.launch(req.body.profileId, req.body.prompt ?? '') });
++      } catch (err) {
++        return reply
++          .code(400)
++          .send({ error: err instanceof Error ? err.message : 'Launch failed' });
++      }
++    },
++  );
++  app.post<{ Params: { id: string } }>(
++    '/api/fleet/runs/:id/stop',
++    { preHandler: authorize },
++    async (req, reply) => {
++      if (!fleet.get(Number(req.params.id))) return reply.code(404).send({ error: 'Unknown run' });
++      fleet.stop(Number(req.params.id));
++      return { ok: true };
++    },
++  );
++  app.delete<{ Params: { id: string } }>(
++    '/api/fleet/runs/:id',
++    { preHandler: authorize },
++    async (req, reply) => {
++      if (!fleet.get(Number(req.params.id))) return reply.code(404).send({ error: 'Unknown run' });
++      fleet.dismiss(Number(req.params.id));
++      return { ok: true };
++    },
++  );
++}
+diff --git a/server/src/fleet/service.ts b/server/src/fleet/service.ts
+new file mode 100644
+index 0000000..7eb5f7f
+--- /dev/null
++++ b/server/src/fleet/service.ts
+@@ -0,0 +1,541 @@
++import { randomUUID } from 'node:crypto';
++import { stripVTControlCharacters } from 'node:util';
++
++import type {
++  FleetConversation,
++  FleetProfile,
++  FleetRun,
++  FleetSnapshot,
++} from '../../../core/src/fleet.js';
++import { createAgentState } from '../agentState.js';
++import type { AgentStateStore } from '../agentStateStore.js';
++import { assignPaletteIfNeeded } from '../paletteAssigner.js';
++import type { PtySessionManager } from '../terminal/ptySessionManager.js';
++import type { AgentState } from '../types.js';
++import { animationTool, type FleetEvent, parseFleetPacket } from './events.js';
++import {
++  buildFleetCommand,
++  FLEET_ACTIVITY_TIMEOUT,
++  FLEET_ARCHIVE_DELAY,
++  FLEET_MAX_CONVERSATIONS,
++  FLEET_MAX_CONVERSATIONS_PER_RUN,
++  FLEET_MAX_HISTORY,
++  FLEET_MAX_LINE,
++  FLEET_MAX_OUTPUT,
++  FLEET_MAX_RUNNING,
++} from './profiles.js';
++
++interface ConversationState {
++  conversation: FleetConversation;
++  agent: AgentState;
++  manuallyHidden: boolean;
++  archiveTimer?: ReturnType<typeof setTimeout>;
++}
++interface RunState {
++  run: FleetRun;
++  conversations: Map<number, ConversationState>;
++  bySession: Map<string, number>;
++  buffer: string;
++  droppingLine: boolean;
++  stopped: boolean;
++  warnedUnscoped: boolean;
++  telemetry: boolean;
++  idleTimer?: ReturnType<typeof setTimeout>;
++}
++
++/** A run owns ONE PTY. Each conversation owns ONE character and its own tool/output state. */
++export class FleetService {
++  private readonly runs = new Map<number, RunState>();
++  private readonly conversations = new Map<number, ConversationState>();
++  private readonly internalRemovals = new Set<number>();
++  private readonly onRemoved = (id: number) => {
++    if (this.internalRemovals.has(id)) return;
++    const state = this.conversations.get(id);
++    if (state) {
++      state.conversation.visible = false;
++      state.manuallyHidden = true;
++      clearTimeout(state.archiveTimer);
++    }
++  };
++
++  constructor(
++    readonly profiles: readonly FleetProfile[],
++    private readonly store: AgentStateStore,
++    private readonly pty: PtySessionManager,
++    private readonly reserveClaudeSession?: (sessionId: string, cwd: string) => void,
++  ) {
++    store.on('agentRemoved', this.onRemoved);
++  }
++
++  snapshot(): FleetSnapshot {
++    return {
++      available: this.pty.isAvailable(),
++      reason: this.pty.unavailableReason(),
++      profiles: this.profiles.map(({ id, name, provider, mode, cwd, ssh }) => ({
++        id,
++        name,
++        provider,
++        mode,
++        cwd,
++        ssh,
++      })),
++      runs: [...this.runs.values()].map(({ run: { output: _output, ...run } }) => run),
++      conversations: [...this.conversations.values()].map(
++        ({ conversation: { output: _output, ...conversation } }) => conversation,
++      ),
++      maxRunning: FLEET_MAX_RUNNING,
++    };
++  }
++
++  get(id: number): FleetRun | undefined {
++    return this.runs.get(id)?.run;
++  }
++  getConversation(id: number): FleetConversation | undefined {
++    return this.conversations.get(id)?.conversation;
++  }
++  liveRunIds(): number[] {
++    return [...this.runs.values()].filter((r) => r.run.status === 'running').map((r) => r.run.id);
++  }
++  ownsSession(sessionId: unknown): boolean {
++    return (
++      typeof sessionId === 'string' &&
++      [...this.conversations.values()].some(
++        (s) => s.conversation.sessionId === sessionId || s.agent.sessionId === sessionId,
++      )
++    );
++  }
++
++  launch(profileId: string, prompt: string): number {
++    const profile = this.profiles.find((p) => p.id === profileId);
++    if (!profile) throw new Error('Unknown profile');
++    if (!this.pty.isAvailable())
++      throw new Error(this.pty.unavailableReason() ?? 'Terminal unavailable');
++    if (this.liveRunIds().length >= FLEET_MAX_RUNNING)
++      throw new Error('Concurrent agent limit reached');
++    while (this.runs.size >= FLEET_MAX_HISTORY) {
++      const oldest = [...this.runs.values()].find(({ run }) => run.status !== 'running');
++      if (!oldest) throw new Error('Fleet history is full');
++      this.dismiss(oldest.run.id);
++    }
++    if (this.conversations.size >= FLEET_MAX_CONVERSATIONS)
++      throw new Error('Conversation limit reached; remove finished Agent groups');
++    const sessionId = randomUUID();
++    const launchProfile =
++      profile.provider === 'claude'
++        ? { ...profile, args: [...(profile.args ?? []), '--session-id', sessionId] }
++        : profile;
++    const command = buildFleetCommand(launchProfile, prompt);
++    if (profile.provider === 'claude' && !profile.ssh)
++      this.reserveClaudeSession?.(sessionId, profile.cwd);
++    const id = this.store.nextAgentId.current++;
++    const session = this.pty.create({ agentId: id, ...command });
++    const run: FleetRun = {
++      id,
++      profileId,
++      name: profile.name,
++      provider: profile.provider,
++      mode: profile.mode,
++      host: profile.ssh ?? 'local',
++      cwd: profile.cwd,
++      status: 'running',
++      activity: profile.ssh ? 'SSH connecting' : 'Starting',
++      startedAt: Date.now(),
++      output: '',
++      ...(profile.provider === 'claude' ? { sessionId } : {}),
++    };
++    const state: RunState = {
++      run,
++      conversations: new Map(),
++      bySession: new Map(),
++      buffer: '',
++      droppingLine: false,
++      stopped: false,
++      warnedUnscoped: false,
++      telemetry: false,
++    };
++    this.runs.set(id, state);
++    // Reuse this placeholder for the first observed session: no duplicate startup character.
++    this.createConversation(state, id, run.sessionId, prompt.trim().slice(0, 80) || profile.name);
++    this.store.broadcast({ type: 'terminalSessionOpened', agentId: id });
++    session.onData((chunk) => this.onData(state, chunk));
++    session.onExit((exit) => {
++      clearTimeout(state.idleTimer);
++      if (!this.runs.has(id)) return;
++      if (state.buffer && !state.droppingLine) this.onLine(state, state.buffer);
++      state.buffer = '';
++      run.exitCode = exit.exitCode;
++      run.endedAt = Date.now();
++      const failed = [...state.conversations.values()].some(
++        (s) => s.conversation.status === 'failed',
++      );
++      run.status = state.stopped ? 'stopped' : exit.exitCode !== 0 || failed ? 'failed' : 'done';
++      run.activity = run.status === 'failed' ? `Failed (exit ${exit.exitCode})` : run.status;
++      for (const conversation of state.conversations.values()) {
++        // Completed conversations stay completed if a sibling or the transport later fails.
++        if (['running', 'waiting'].includes(conversation.conversation.status)) {
++          this.finish(
++            conversation,
++            state.stopped ? 'stopped' : exit.exitCode !== 0 ? 'failed' : 'done',
++            run.activity,
++          );
++        }
++      }
++      this.store.broadcast({ type: 'terminalSessionClosed', agentId: id, exitCode: exit.exitCode });
++      this.appendRun(state, `\n[${run.activity}]\n`);
++    });
++    return id;
++  }
++
++  /** Normalized ingestion also serves integrations which emit tagged events over HTTP. */
++  ingest(runId: number, raw: unknown): number | null {
++    const state = this.runs.get(runId);
++    if (!state || state.run.status !== 'running') throw new Error('Agent process is not running');
++    const packet = parseFleetPacket(state.run.provider, raw);
++    if (!packet.conversationId && packet.events.length === 0) return null;
++    let target: ConversationState | undefined;
++    if (packet.conversationId) {
++      const known = state.bySession.get(packet.conversationId);
++      if (known !== undefined) target = state.conversations.get(known);
++      else {
++        const first = state.conversations.values().next().value as ConversationState;
++        if (state.conversations.size === 1 && !first.conversation.sessionId) {
++          target = first;
++          target.conversation.sessionId = packet.conversationId;
++          target.agent.sessionId = packet.conversationId;
++          state.bySession.set(packet.conversationId, target.conversation.id);
++          state.run.sessionId = packet.conversationId;
++        } else {
++          if (
++            state.conversations.size >= FLEET_MAX_CONVERSATIONS_PER_RUN ||
++            this.conversations.size >= FLEET_MAX_CONVERSATIONS
++          )
++            throw new Error('Conversation limit reached');
++          target = this.createConversation(
++            state,
++            this.store.nextAgentId.current++,
++            packet.conversationId,
++            packet.title || `Conversation ${state.conversations.size + 1}`,
++          );
++        }
++      }
++    } else if (state.conversations.size === 1) target = state.conversations.values().next().value;
++    else {
++      if (!state.warnedUnscoped) {
++        this.appendRun(
++          state,
++          '[Unassigned event] Multiple conversations: supply conversationId on every event.\n',
++        );
++        state.warnedUnscoped = true;
++      }
++      return null;
++    }
++    if (!target) return null;
++    if (packet.conversationId) {
++      state.telemetry = true;
++      clearTimeout(state.idleTimer);
++    }
++    if (packet.title?.trim()) {
++      target.conversation.title = packet.title;
++      this.sendInfo(target);
++    }
++    for (const event of packet.events) this.apply(state, target, event);
++    return target.conversation.id;
++  }
++
++  /** Hide/show is a presentation operation. It NEVER kills a shared process. */
++  setConversationVisible(id: number, visible: boolean, manual = true): void {
++    const state = this.conversations.get(id);
++    if (!state) throw new Error('Unknown conversation');
++    clearTimeout(state.archiveTimer);
++    state.manuallyHidden = manual && !visible;
++    if (state.conversation.visible === visible) return;
++    state.conversation.visible = visible;
++    if (!visible) {
++      this.internalRemovals.add(id);
++      this.store.delete(id);
++      this.internalRemovals.delete(id);
++    } else {
++      this.store.set(id, state.agent);
++      this.sendInfo(state);
++      this.replay(state);
++    }
++  }
++
++  stop(id: number): void {
++    const state = this.runs.get(id);
++    if (!state) throw new Error('Unknown run');
++    if (state.run.status !== 'running') return;
++    state.stopped = true;
++    state.run.activity = 'Stopping';
++    this.pty.dispose(id);
++  }
++
++  dismiss(id: number): void {
++    const state = this.runs.get(id);
++    if (!state) throw new Error('Unknown run');
++    clearTimeout(state.idleTimer);
++    this.stop(id);
++    for (const [conversationId, conversation] of state.conversations) {
++      clearTimeout(conversation.archiveTimer);
++      this.setConversationVisible(conversationId, false);
++      this.conversations.delete(conversationId);
++    }
++    this.runs.delete(id);
++  }
++
++  dispose(): void {
++    for (const id of [...this.runs.keys()]) this.dismiss(id);
++    this.store.off('agentRemoved', this.onRemoved);
++  }
++
++  private createConversation(
++    run: RunState,
++    id: number,
++    sessionId: string | undefined,
++    title: string,
++  ): ConversationState {
++    const now = Date.now();
++    const conversation: FleetConversation = {
++      id,
++      runId: run.run.id,
++      sessionId,
++      title,
++      provider: run.run.provider,
++      host: run.run.host,
++      cwd: run.run.cwd,
++      status: 'running',
++      activity: 'Starting',
++      visible: true,
++      startedAt: now,
++      updatedAt: now,
++      output: '',
++    };
++    const agent = createAgentState({
++      id,
++      sessionId: sessionId ?? randomUUID(),
++      isExternal: false,
++      hooksOnly: true,
++      managedFleet: true,
++      projectDir: run.run.cwd,
++      jsonlFile: '',
++      providerId: run.run.provider,
++      directoryName: `${run.run.name} · ${run.run.host}`,
++      hookDelivered: true,
++    });
++    assignPaletteIfNeeded(agent, this.store);
++    const state: ConversationState = { conversation, agent, manuallyHidden: false };
++    run.conversations.set(id, state);
++    if (sessionId) run.bySession.set(sessionId, id);
++    this.conversations.set(id, state);
++    this.store.set(id, agent);
++    this.sendInfo(state);
++    this.store.broadcast({ type: 'agentStatus', id, status: 'active' });
++    return state;
++  }
++
++  private sendInfo(state: ConversationState): void {
++    const c = state.conversation;
++    state.agent.fleetConversation = {
++      runId: c.runId,
++      title: c.title,
++      provider: c.provider,
++      host: c.host,
++    };
++    if (c.visible)
++      this.store.broadcast({
++        type: 'fleetConversationInfo',
++        id: c.id,
++        ...state.agent.fleetConversation,
++      });
++  }
++
++  private replay(state: ConversationState): void {
++    const { agent, conversation: c } = state;
++    for (const [toolId, status] of agent.activeToolStatuses)
++      this.store.broadcast({
++        type: 'agentToolStart',
++        id: c.id,
++        toolId,
++        status,
++        toolName: agent.activeToolNames.get(toolId),
++      });
++    this.store.broadcast({
++      type: 'agentStatus',
++      id: c.id,
++      status: agent.isWaiting ? 'waiting' : 'active',
++      awaitingInput: agent.fleetAwaitingInput,
++    });
++  }
++
++  private appendRun(state: RunState, text: string): void {
++    state.run.output = (state.run.output + text).slice(-FLEET_MAX_OUTPUT);
++  }
++  private append(state: RunState, target: ConversationState, text: string): void {
++    target.conversation.output = (target.conversation.output + text).slice(-FLEET_MAX_OUTPUT);
++    this.appendRun(state, `[${target.conversation.title}] ${text}`);
++  }
++
++  private onData(state: RunState, chunk: string): void {
++    if (!this.runs.has(state.run.id)) return;
++    if (state.run.mode === 'interactive') {
++      // Terminal traffic cannot identify conversations. Use estimates only until a tagged integration takes over.
++      const target = state.conversations.values().next().value as ConversationState;
++      if (state.conversations.size === 1 && !state.telemetry) {
++        this.append(state, target, stripVTControlCharacters(chunk));
++        this.activate(target);
++        target.conversation.activity = 'Terminal output (activity estimate)';
++        clearTimeout(state.idleTimer);
++        state.idleTimer = setTimeout(() => {
++          target.conversation.activity = 'Terminal quiet (not a completion signal)';
++          this.clearTools(target, false);
++        }, FLEET_ACTIVITY_TIMEOUT);
++      } else this.appendRun(state, stripVTControlCharacters(chunk));
++      return;
++    }
++    for (const piece of chunk.split(/(?<=\n)/)) {
++      if (!state.droppingLine) {
++        state.buffer += piece;
++        if (state.buffer.length > FLEET_MAX_LINE) {
++          state.buffer = '';
++          state.droppingLine = true;
++          this.appendRun(state, '[Oversized event skipped]\n');
++        }
++      }
++      if (piece.endsWith('\n')) {
++        if (!state.droppingLine) this.onLine(state, state.buffer);
++        state.buffer = '';
++        state.droppingLine = false;
++      }
++    }
++  }
++
++  private onLine(state: RunState, line: string): void {
++    const clean = stripVTControlCharacters(line).trim();
++    if (!clean) return;
++    let raw: unknown;
++    try {
++      raw = JSON.parse(clean);
++    } catch {
++      if (state.conversations.size === 1)
++        this.append(state, state.conversations.values().next().value!, clean + '\n');
++      else this.appendRun(state, clean + '\n');
++      return;
++    }
++    try {
++      this.ingest(state.run.id, raw);
++    } catch (error) {
++      this.appendRun(
++        state,
++        `[Event rejected] ${error instanceof Error ? error.message : String(error)}\n`,
++      );
++    }
++  }
++
++  private activate(state: ConversationState): void {
++    clearTimeout(state.archiveTimer);
++    state.conversation.status = 'running';
++    state.agent.isWaiting = false;
++    state.agent.fleetAwaitingInput = false;
++    if (!state.conversation.visible && !state.manuallyHidden)
++      this.setConversationVisible(state.conversation.id, true, false);
++    if (state.conversation.visible)
++      this.store.broadcast({ type: 'agentStatus', id: state.conversation.id, status: 'active' });
++  }
++
++  private apply(run: RunState, state: ConversationState, event: FleetEvent): void {
++    const { conversation: c, agent } = state;
++    const id = c.id;
++    c.updatedAt = Date.now();
++    switch (event.kind) {
++      case 'session':
++        break; // identity is resolved before normalizing content
++      case 'turnStart':
++        this.activate(state);
++        c.activity = 'Working';
++        break;
++      case 'text':
++        if (c.status === 'done' || c.status === 'waiting') {
++          this.activate(state);
++          c.activity = 'Working';
++        }
++        this.append(run, state, event.text + '\n');
++        break;
++      case 'error':
++        this.append(run, state, `[Error] ${event.message}\n`);
++        this.finish(state, 'failed', event.message);
++        break;
++      case 'done':
++        if (c.status !== 'failed') this.finish(state, 'done', 'Done');
++        break;
++      case 'waiting':
++        clearTimeout(state.archiveTimer);
++        c.status = 'waiting';
++        c.activity = event.message;
++        this.clearTools(state, true);
++        if (!c.visible && !state.manuallyHidden) this.setConversationVisible(id, true, false);
++        break;
++      case 'tool': {
++        this.activate(state);
++        const status = `${event.name}${event.detail ? ': ' + event.detail : ''}`;
++        c.activity = status;
++        agent.activeToolIds.add(event.id);
++        agent.activeToolStatuses.set(event.id, status);
++        agent.activeToolNames.set(event.id, animationTool(event.name));
++        if (c.visible)
++          this.store.broadcast({
++            type: 'agentToolStart',
++            id,
++            toolId: event.id,
++            toolName: animationTool(event.name),
++            status,
++          });
++        this.append(run, state, `[Tool] ${status}\n`);
++        break;
++      }
++      case 'toolEnd':
++        agent.activeToolIds.delete(event.id);
++        agent.activeToolStatuses.delete(event.id);
++        agent.activeToolNames.delete(event.id);
++        if (c.visible) this.store.broadcast({ type: 'agentToolDone', id, toolId: event.id });
++        if (!agent.activeToolIds.size && c.status === 'running') c.activity = 'Working';
++        break;
++    }
++    run.run.activity = `${run.conversations.size} conversation(s)`;
++  }
++
++  private finish(
++    state: ConversationState,
++    status: 'done' | 'failed' | 'stopped',
++    activity: string,
++  ): void {
++    state.conversation.status = status;
++    state.conversation.activity = activity;
++    state.conversation.updatedAt = Date.now();
++    this.clearTools(state, status === 'failed');
++    clearTimeout(state.archiveTimer);
++    // Keep failures and questions visible for attention; completed/stopped work goes to history.
++    if (status === 'failed' && !state.conversation.visible && !state.manuallyHidden) {
++      this.setConversationVisible(state.conversation.id, true, false);
++    }
++    if (status !== 'failed' && state.conversation.visible && !state.manuallyHidden) {
++      state.archiveTimer = setTimeout(
++        () => this.setConversationVisible(state.conversation.id, false, false),
++        FLEET_ARCHIVE_DELAY,
++      );
++      state.archiveTimer.unref?.();
++    }
++  }
++
++  private clearTools(state: ConversationState, awaitingInput: boolean): void {
++    const { agent, conversation: c } = state;
++    agent.activeToolIds.clear();
++    agent.activeToolStatuses.clear();
++    agent.activeToolNames.clear();
++    agent.isWaiting = true;
++    agent.fleetAwaitingInput = awaitingInput;
++    if (c.visible) {
++      this.store.broadcast({ type: 'agentToolsClear', id: c.id });
++      this.store.broadcast({ type: 'agentStatus', id: c.id, status: 'waiting', awaitingInput });
++    }
++  }
++}
+diff --git a/server/src/httpServer.ts b/server/src/httpServer.ts
+index 80e350c..8bea73c 100644
+--- a/server/src/httpServer.ts
++++ b/server/src/httpServer.ts
+@@ -18,6 +18,8 @@ import {
+   WS_CLOSE_FORBIDDEN_ORIGIN,
+   WS_CLOSE_UNAUTHORIZED,
+ } from './constants.js';
++import { registerFleetRoutes } from './fleet/routes.js';
++import type { FleetService } from './fleet/service.js';
+ import type { PtySessionManager } from './terminal/ptySessionManager.js';
+ import { registerTerminalRoutes } from './terminal/terminalRoutes.js';
+ import type { AgentState } from './types.js';
+@@ -56,6 +58,7 @@ export interface HttpServerOptions {
+   /** PTY terminals for standalone-launched agents. Absent = terminal feature off
+    *  (VS Code embedded mode, where the editor owns terminals). */
+   ptyManager?: PtySessionManager;
++  fleet?: FleetService;
+   /** Extra Host names (beyond loopback and a specific bind address) a
+    *  privileged standalone handshake may arrive under -- e.g. a reverse proxy's
+    *  public name. See wsAuth.privilegedHostnames. */
+@@ -107,6 +110,8 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
+   const allowedHostnames = privilegedHostnames(host, options.allowedHosts ?? []);
+ 
+   registerHealthRoute(app);
++  if (!options.embedded && options.fleet)
++    registerFleetRoutes(app, options.fleet, options.token, allowedHostnames);
+   registerHookRoute(app, options);
+   registerWebSocketRoute(app, options, allowedHostnames);
+   registerTerminalRoutes(app, {
+@@ -236,7 +241,13 @@ function registerWebSocketRoute(
+     };
+ 
+     const onAgentRemoved = (id: number) => {
+-      safeSend(socket, { type: 'agentClosed', id });
++      const keepTerminal =
++        options.fleet?.getConversation(id)?.runId === id && options.ptyManager?.has(id);
++      safeSend(socket, {
++        type: 'agentClosed',
++        id,
++        ...(keepTerminal ? { keepTerminal: true } : {}),
++      });
+     };
+ 
+     const onBroadcast = (message: Record<string, unknown>) => {
+@@ -262,6 +273,7 @@ function registerWebSocketRoute(
+           onReloadAssets: options.onReloadAssets,
+           privileged,
+           ptyManager: options.ptyManager,
++          fleet: options.fleet,
+         });
+       } catch {
+         // Malformed JSON, ignore
+diff --git a/server/src/server.ts b/server/src/server.ts
+index df5083c..2a955d2 100644
+--- a/server/src/server.ts
++++ b/server/src/server.ts
+@@ -17,6 +17,7 @@ import {
+   SERVER_REGISTRY_PROTOCOL_VERSION,
+   SERVERS_DIR,
+ } from './constants.js';
++import type { FleetService } from './fleet/service.js';
+ import { createHttpServer } from './httpServer.js';
+ import type { ServerConfig, StandaloneAccess } from './serverConfig.js';
+ import { isServerConfig, isServerTarget, sameStandaloneAccess } from './serverConfig.js';
+@@ -73,6 +74,7 @@ export class PixelAgentsServer {
+     onSetHooksEnabled?: SetHooksEnabledSideEffect;
+     onReloadAssets?: ReloadAssetsSideEffect;
+     ptyManager?: PtySessionManager;
++    fleet?: FleetService;
+     /** Extra privileged Host names (standalone; see wsAuth.privilegedHostnames). */
+     allowedHosts?: readonly string[];
+     /** Replace the persisted standalone token, revoking every URL that carried
+@@ -113,6 +115,10 @@ export class PixelAgentsServer {
+       (e) => e.servesSpa === wantsSpa && sameStandaloneAccess(e.standalone, standalone),
+     );
+     if (candidate) {
++      if (options?.fleet)
++        throw new Error(
++          `A standalone office already runs on port ${candidate.port}. Stop it before starting a new fleet configuration.`,
++        );
+       this.config = candidate;
+       this.ownsServer = false;
+       console.log(
+@@ -143,6 +149,7 @@ export class PixelAgentsServer {
+       onSetHooksEnabled: options?.onSetHooksEnabled,
+       onReloadAssets: options?.onReloadAssets,
+       ptyManager: options?.ptyManager,
++      fleet: options?.fleet,
+       allowedHosts: standalone?.allowedHosts,
+     });
+ 
+diff --git a/server/src/types.ts b/server/src/types.ts
+index d25c1bb..6f39c9d 100644
+--- a/server/src/types.ts
++++ b/server/src/types.ts
+@@ -32,6 +32,10 @@ export interface AgentState {
+   hookDelivered: boolean;
+   /** True when agent has no transcript file (provider doesn't use JSONL). All state from hooks. */
+   hooksOnly?: boolean;
++  /** Fleet process lifetime is owned by FleetService, never restored from Claude transcripts. */
++  managedFleet?: boolean;
++  fleetConversation?: { runId: number; title: string; provider: string; host: string };
++  fleetAwaitingInput?: boolean;
+   /** Provider that created this agent (defaults to 'claude') */
+   providerId?: string;
+   /** Set when SessionEnd(reason=clear) fires; cleared when SessionStart(source=clear) reassigns */
+diff --git a/webview-ui/package.json b/webview-ui/package.json
+index e4fd502..c47a532 100644
+--- a/webview-ui/package.json
++++ b/webview-ui/package.json
+@@ -12,6 +12,7 @@
+     "test:watch": "vitest"
+   },
+   "dependencies": {
++    "@fontsource/noto-sans-sc": "^5.3.1",
+     "@material-symbols/font-700": "^0.46.0",
+     "@xterm/addon-fit": "^0.10.0",
+     "@xterm/addon-web-links": "^0.11.0",
+diff --git a/webview-ui/src/App.tsx b/webview-ui/src/App.tsx
+index bb9dad2..3208d2e 100644
+--- a/webview-ui/src/App.tsx
++++ b/webview-ui/src/App.tsx
+@@ -8,6 +8,7 @@ import { ConnectionIndicator } from './components/ConnectionIndicator.js';
+ import { DebugView } from './components/DebugView.js';
+ import { DirectoryModal } from './components/DirectoryModal.js';
+ import { EditActionBar } from './components/EditActionBar.js';
++import { FleetPanel } from './components/FleetPanel.js';
+ import { IntroBubble } from './components/IntroBubble.js';
+ import { MigrationNotice } from './components/MigrationNotice.js';
+ import { SettingsModal } from './components/SettingsModal.js';
+@@ -703,6 +704,7 @@ function App() {
+         isMobile && keyboard.clampHeight !== null ? { height: keyboard.clampHeight } : undefined
+       }
+     >
++      {isBrowserRuntime && !officeReadOnly && <FleetPanel onFocus={handleClick} />}
+       {isMobile ? (
+         <MobileShell
+           office={officeRegion}
+diff --git a/webview-ui/src/components/FleetPanel.tsx b/webview-ui/src/components/FleetPanel.tsx
+new file mode 100644
+index 0000000..9638db1
+--- /dev/null
++++ b/webview-ui/src/components/FleetPanel.tsx
+@@ -0,0 +1,315 @@
++import { useCallback, useEffect, useState } from 'react';
++
++import type { FleetConversation, FleetRun, FleetSnapshot } from '../../../core/src/fleet.js';
++import { FLEET_REFRESH_MS } from '../constants.js';
++import { serverToken } from '../transport/serverToken.js';
++import { Button } from './ui/Button.js';
++
++async function request<T>(path = '', method = 'GET', body?: unknown): Promise<T> {
++  const response = await fetch('/api/fleet' + path, {
++    method,
++    headers: {
++      Authorization: `Bearer ${serverToken ?? ''}`,
++      ...(body ? { 'Content-Type': 'application/json' } : {}),
++    },
++    body: body ? JSON.stringify(body) : undefined,
++  });
++  const data = await response.json();
++  if (!response.ok) throw new Error(data.error ?? data.message ?? 'Request failed');
++  return data as T;
++}
++const statusLabels: Record<FleetConversation['status'], string> = {
++  running: '进行中',
++  waiting: '等你回复',
++  done: '已完成',
++  failed: '失败',
++  stopped: '已停止',
++};
++type Selection = { kind: 'runs' | 'conversations'; id: number };
++
++export function FleetPanel({ onFocus }: { onFocus: (id: number) => void }) {
++  const [open, setOpen] = useState(false);
++  const [snapshot, setSnapshot] = useState<FleetSnapshot | null>(null);
++  const [profileId, setProfileId] = useState('');
++  const [prompt, setPrompt] = useState('');
++  const [selected, setSelected] = useState<Selection | null>(null);
++  const [detail, setDetail] = useState<FleetConversation | FleetRun | null>(null);
++  const [history, setHistory] = useState(false);
++  const [error, setError] = useState('');
++  const [pending, setPending] = useState(false);
++  const [connected, setConnected] = useState(false);
++
++  useEffect(() => {
++    if (!open) return;
++    let alive = true;
++    let timer: ReturnType<typeof setTimeout>;
++    const refresh = async () => {
++      try {
++        const next = await request<FleetSnapshot>();
++        if (!alive) return;
++        setSnapshot(next);
++        setConnected(true);
++        if (selected) {
++          if (next[selected.kind].some((r) => r.id === selected.id)) {
++            const item = await request<FleetConversation | FleetRun>(
++              `/${selected.kind}/${selected.id}`,
++            );
++            if (alive) setDetail(item);
++          } else {
++            setSelected(null);
++            setDetail(null);
++          }
++        }
++      } catch (e) {
++        if (alive) {
++          setConnected(false);
++          setError(String(e));
++        }
++      }
++      if (alive) timer = setTimeout(refresh, FLEET_REFRESH_MS);
++    };
++    void refresh();
++    return () => {
++      alive = false;
++      clearTimeout(timer);
++    };
++  }, [open, selected]);
++
++  const perform = useCallback(async (action: () => Promise<unknown>) => {
++    setPending(true);
++    setError('');
++    try {
++      await action();
++      setSnapshot(await request<FleetSnapshot>());
++    } catch (e) {
++      setError(e instanceof Error ? e.message : String(e));
++    } finally {
++      setPending(false);
++    }
++  }, []);
++  const select = (kind: Selection['kind'], id: number) => {
++    setSelected({ kind, id });
++    setDetail(null);
++  };
++  const currentId = profileId || snapshot?.profiles[0]?.id || '';
++  const profile = snapshot?.profiles.find((p) => p.id === currentId);
++  const running = snapshot?.runs.filter((r) => r.status === 'running').length ?? 0;
++  const conversations = snapshot?.conversations ?? [];
++  const active = conversations.filter(
++    (c) => c.status === 'running' || c.status === 'waiting',
++  ).length;
++  const hidden = conversations.filter((c) => !c.visible).length;
++
++  return (
++    <div className="fleet-root">
++      <Button
++        size="md"
++        variant={open ? 'active' : 'default'}
++        onClick={() => setOpen(!open)}
++        aria-expanded={open}
++      >
++        {open ? '收起小队' : '多 Agent 小队'}
++      </Button>
++      {open && (
++        <section className="fleet-panel pixel-scrollbar" aria-label="多 Agent 小队">
++          <div className="fleet-title">
++            <strong>Agent 小队</strong>
++            <span>{connected ? `${running} 个进程 · ${active} 个活跃对话` : '连接中…'}</span>
++          </div>
++          <p className="fleet-muted">一个对话一个小人。同组对话共用终端，各自显示进度。</p>
++          <form
++            onSubmit={(e) => {
++              e.preventDefault();
++              void perform(async () => {
++                const result = await request<{ id: number }>('/runs', 'POST', {
++                  profileId: currentId,
++                  prompt,
++                });
++                select('conversations', result.id);
++              });
++            }}
++          >
++            <label htmlFor="fleet-profile">Agent / 环境</label>
++            <select
++              id="fleet-profile"
++              value={currentId}
++              onChange={(e) => setProfileId(e.target.value)}
++            >
++              {snapshot?.profiles.map((p) => (
++                <option key={p.id} value={p.id}>
++                  {p.name} · {p.ssh ?? '本地'} · {p.mode === 'task' ? '任务' : '交互'}
++                </option>
++              ))}
++            </select>
++            {profile && (
++              <p className="fleet-path" title={profile.cwd}>
++                {profile.cwd}
++              </p>
++            )}
++            {profile?.mode !== 'interactive' && (
++              <>
++                <label htmlFor="fleet-prompt">交给它的任务</label>
++                <textarea
++                  id="fleet-prompt"
++                  placeholder="例如：检查项目的测试，分析失败原因"
++                  value={prompt}
++                  onChange={(e) => setPrompt(e.target.value)}
++                  maxLength={16000}
++                  rows={3}
++                  required
++                />
++              </>
++            )}
++            <Button
++              type="submit"
++              variant="accent"
++              size="md"
++              disabled={
++                pending ||
++                !connected ||
++                !snapshot?.available ||
++                !profile ||
++                running >= (snapshot?.maxRunning ?? 0)
++              }
++            >
++              {pending ? '处理中…' : '+ 启动 Agent'}
++            </Button>
++          </form>
++          {!snapshot?.available && snapshot?.reason && <p role="status">{snapshot.reason}</p>}
++          {error && (
++            <p className="fleet-error" role="alert">
++              {error}
++            </p>
++          )}
++          <div className="fleet-title fleet-history">
++            <span>完成后 15 秒自动收起</span>
++            <Button
++              size="sm"
++              variant={history ? 'active' : 'default'}
++              onClick={() => setHistory(!history)}
++            >
++              {history ? '隐藏历史' : `历史 / 已收起 (${hidden})`}
++            </Button>
++          </div>
++          <div className="fleet-runs">
++            {[...(snapshot?.runs ?? [])].reverse().map((run) => {
++              const group = conversations.filter((c) => c.runId === run.id);
++              return (
++                <div key={run.id} className="fleet-run" data-run-id={run.id}>
++                  <div className="fleet-group-title">
++                    <strong>
++                      #{run.id} {run.name}
++                    </strong>
++                    <span>{statusLabels[run.status]}</span>
++                  </div>
++                  <p className="fleet-muted">
++                    {run.provider} · {run.host} · {group.length} 个对话
++                  </p>
++                  <div className="fleet-actions">
++                    <Button size="sm" onClick={() => select('runs', run.id)}>
++                      进程日志
++                    </Button>
++                    {run.status === 'running' ? (
++                      <>
++                        <Button
++                          size="sm"
++                          onClick={() => {
++                            onFocus(run.id);
++                            setOpen(false);
++                          }}
++                        >
++                          共享终端
++                        </Button>
++                        <Button
++                          size="sm"
++                          disabled={pending}
++                          onClick={() =>
++                            void perform(() => request(`/runs/${run.id}/stop`, 'POST'))
++                          }
++                        >
++                          停止整个 Agent（{group.length} 个对话）
++                        </Button>
++                      </>
++                    ) : (
++                      <Button
++                        size="sm"
++                        disabled={pending}
++                        onClick={() => void perform(() => request(`/runs/${run.id}`, 'DELETE'))}
++                      >
++                        移除分组
++                      </Button>
++                    )}
++                  </div>
++                  {group
++                    .filter((c) => c.visible || history)
++                    .map((c) => (
++                      <div
++                        key={c.id}
++                        data-conversation-id={c.id}
++                        className={`fleet-conversation ${selected?.kind === 'conversations' && selected.id === c.id ? 'fleet-selected' : ''}`}
++                      >
++                        <button
++                          className="fleet-run-select"
++                          onClick={() => select('conversations', c.id)}
++                        >
++                          <strong>
++                            #{c.id} {c.title}
++                          </strong>
++                          <span>
++                            {statusLabels[c.status]}
++                            {!c.visible && ' · 已收起'}
++                          </span>
++                          <small className="fleet-activity">{c.activity}</small>
++                        </button>
++                        <div className="fleet-actions">
++                          {c.visible && (
++                            <Button
++                              size="sm"
++                              onClick={() => {
++                                onFocus(c.id);
++                                setOpen(false);
++                              }}
++                            >
++                              定位 / 终端
++                            </Button>
++                          )}
++                          <Button
++                            size="sm"
++                            disabled={pending}
++                            onClick={() =>
++                              void perform(() =>
++                                request(`/conversations/${c.id}/visibility`, 'POST', {
++                                  visible: !c.visible,
++                                }),
++                              )
++                            }
++                          >
++                            {c.visible ? '收起小人' : '显示小人'}
++                          </Button>
++                        </div>
++                      </div>
++                    ))}
++                  {!history && group.every((c) => !c.visible) && (
++                    <p className="fleet-muted">本组小人已收起，可在历史中查看。</p>
++                  )}
++                </div>
++              );
++            })}
++            {snapshot?.runs.length === 0 && (
++              <p className="fleet-muted">选择环境，启动第一个 Agent。</p>
++            )}
++          </div>
++          {detail && (
++            <div className="fleet-detail">
++              <strong>
++                #{detail.id} {selected?.kind === 'runs' ? '进程日志（包含所有对话）' : '对话输出'}
++              </strong>
++              {detail.sessionId && <p className="fleet-path">会话：{detail.sessionId}</p>}
++              <pre className="pixel-scrollbar">{detail.output || '等待 Agent 输出…'}</pre>
++            </div>
++          )}
++        </section>
++      )}
++    </div>
++  );
++}
+diff --git a/webview-ui/src/constants.ts b/webview-ui/src/constants.ts
+index 3c9c898..41d40ab 100644
+--- a/webview-ui/src/constants.ts
++++ b/webview-ui/src/constants.ts
+@@ -366,7 +366,7 @@ export const MUGSHOT_DISPLAY_PX = MUGSHOT_CROP_SIDE_PX * MUGSHOT_RENDER_ZOOM;
+  *  and a TUI mis-renders in a proportional face. The drawer chrome around it
+  *  still uses the pixel font. */
+ export const TERMINAL_FONT_FAMILY =
+-  'ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace';
++  'ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", "Noto Sans SC", monospace';
+ export const TERMINAL_FONT_SIZE_PX = 13;
+ /** Lines xterm retains client-side (independent of the server's replay ring). */
+ export const TERMINAL_SCROLLBACK_LINES = 5_000;
+@@ -560,3 +560,4 @@ export const VISUAL_VIEWPORT_FULL_EPSILON_PX = 1;
+  *  (with an editable focused) = the software keyboard is up. Well above an
+  *  address bar collapsing (~56 px), well below any on-screen keyboard. */
+ export const KEYBOARD_MIN_HEIGHT_PX = 150;
++export const FLEET_REFRESH_MS = 1200;
+diff --git a/webview-ui/src/hooks/useExtensionMessages.ts b/webview-ui/src/hooks/useExtensionMessages.ts
+index 5fb8708..d674f7c 100644
+--- a/webview-ui/src/hooks/useExtensionMessages.ts
++++ b/webview-ui/src/hooks/useExtensionMessages.ts
+@@ -395,7 +395,7 @@ export function useExtensionMessages(
+         // Drop the drawer tab too. terminalSessionClosed normally does this, but
+         // an agent can be removed without its PTY ever reporting an exit (e.g.
+         // stale cleanup), and a tab for a gone agent would attach to nothing.
+-        setTerminalAgentIds((prev) => prev.filter((a) => a !== id));
++        if (!msg.keepTerminal) setTerminalAgentIds((prev) => prev.filter((a) => a !== id));
+         setAgentTools((prev) => omitKey(prev, id));
+         setAgentStatuses((prev) => omitKey(prev, id));
+         setAgentAwaitingInput((prev) => omitKey(prev, id));
+@@ -831,6 +831,12 @@ export function useExtensionMessages(
+         } catch (err) {
+           console.error(`❌ Webview: Error processing furnitureAssetsLoaded:`, err);
+         }
++      } else if (msg.type === 'fleetConversationInfo') {
++        const ch = os.characters.get(msg.id);
++        if (ch) {
++          ch.terminalOwnerId = msg.runId;
++          ch.agentName = msg.title;
++        }
+       } else if (msg.type === 'agentTeamInfo') {
+         const id = msg.id as number;
+         os.setTeamInfo(
+diff --git a/webview-ui/src/index.css b/webview-ui/src/index.css
+index 791cfcb..c3ad17e 100644
+--- a/webview-ui/src/index.css
++++ b/webview-ui/src/index.css
+@@ -1,4 +1,5 @@
+ @import 'tailwindcss';
++@import '@fontsource/noto-sans-sc/400.css';
+ /* Material Symbols Sharp, weight 700 (the single-weight package keeps the
+    FILL/GRAD/opsz axes variable). Imported into the base layer: the package's
+    own rules are unlayered and would otherwise outrank every Tailwind utility
+@@ -352,3 +353,156 @@
+     opacity: 0.3;
+   }
+ }
++
++/* Multi-provider / SSH control panel. Shares the office's color tokens. */
++.fleet-root,
++.fleet-root * {
++  font-family: 'Noto Sans SC', system-ui, sans-serif;
++}
++
++.fleet-root {
++  font-family: 'Noto Sans SC', system-ui, sans-serif;
++  position: absolute;
++  top: 12px;
++  left: 12px;
++  z-index: 40;
++  font-size: 14px;
++}
++.fleet-panel {
++  margin-top: 8px;
++  padding: 16px;
++  width: min(400px, calc(100vw - 24px));
++  max-height: calc(100dvh - 110px);
++  overflow: auto;
++  background: var(--color-bg);
++  color: var(--color-text);
++  border: 2px solid var(--color-border);
++}
++.fleet-title {
++  display: flex;
++  justify-content: space-between;
++  gap: 12px;
++  font-size: 18px;
++}
++.fleet-title span,
++.fleet-muted {
++  font-size: 12px;
++  opacity: 0.7;
++}
++.fleet-muted {
++  margin: 8px 0 14px;
++}
++.fleet-panel label {
++  display: block;
++  margin: 10px 0 6px;
++}
++.fleet-panel select,
++.fleet-panel textarea {
++  display: block;
++  width: 100%;
++  background: var(--color-btn-bg);
++  color: inherit;
++  border: 2px solid var(--color-border);
++  padding: 8px;
++  font: inherit;
++}
++.fleet-panel textarea {
++  resize: vertical;
++  margin-bottom: 10px;
++}
++.fleet-path {
++  font-size: 11px;
++  overflow-wrap: anywhere;
++  opacity: 0.65;
++  margin: 6px 0;
++}
++.fleet-error {
++  padding: 8px;
++  border: 1px solid currentColor;
++  margin-top: 10px;
++  white-space: pre-wrap;
++}
++.fleet-runs {
++  margin-top: 16px;
++  display: grid;
++  gap: 8px;
++}
++.fleet-run {
++  border: 2px solid var(--color-border);
++  padding: 8px;
++}
++.fleet-selected {
++  border-color: var(--color-accent);
++}
++.fleet-run-select {
++  display: grid;
++  grid-template-columns: 1fr auto;
++  gap: 4px 10px;
++  width: 100%;
++  text-align: left;
++  color: inherit;
++  cursor: pointer;
++}
++.fleet-run-select small {
++  grid-column: 1/-1;
++  opacity: 0.7;
++  overflow-wrap: anywhere;
++}
++.fleet-activity {
++  max-height: 42px;
++  overflow: hidden;
++}
++.fleet-actions {
++  display: flex;
++  gap: 6px;
++  margin-top: 8px;
++}
++.fleet-detail {
++  margin-top: 14px;
++}
++.fleet-detail pre {
++  font-family: 'Noto Sans SC', monospace;
++  white-space: pre-wrap;
++  overflow-wrap: anywhere;
++  max-height: 240px;
++  overflow: auto;
++  font-size: 12px;
++  padding: 10px;
++  background: var(--color-btn-bg);
++}
++
++.fleet-root button {
++  font-family: inherit;
++  font-size: 14px;
++}
++
++.fleet-group-title {
++  display: flex;
++  justify-content: space-between;
++  gap: 10px;
++}
++.fleet-group-title strong {
++  overflow-wrap: anywhere;
++}
++.fleet-group-title span {
++  white-space: nowrap;
++  color: var(--vscode-descriptionForeground, #aaa);
++}
++.fleet-conversation {
++  margin-top: 10px;
++  padding: 8px;
++  border-left: 3px solid #777b9b;
++  background: #222433;
++}
++.fleet-conversation.fleet-selected {
++  border-left-color: #ac9bf2;
++  background: #303047;
++}
++.fleet-history {
++  margin-top: 16px;
++  font-size: 11px;
++  flex-wrap: wrap;
++}
++.fleet-actions {
++  flex-wrap: wrap;
++}
+diff --git a/webview-ui/src/mobile/useMobileShell.ts b/webview-ui/src/mobile/useMobileShell.ts
+index 66a37a6..01148dc 100644
+--- a/webview-ui/src/mobile/useMobileShell.ts
++++ b/webview-ui/src/mobile/useMobileShell.ts
+@@ -86,21 +86,22 @@ export function useMobileShell({
+   const selectCard = useCallback(
+     (agentId: number) => {
+       const os = getOfficeState();
+-      const hasTerminal = terminalAgentIds.includes(agentId);
++      const ownerId = os.terminalOwnerOf(agentId);
++      const hasTerminal = terminalAgentIds.includes(ownerId);
+       if (view === 'terminal') {
+         os.selectAndFollow(agentId);
+-        if (hasTerminal) reveal(agentId);
++        if (hasTerminal) reveal(ownerId);
+         else setView('office');
+         return;
+       }
+       if (os.selectedAgentId === agentId && hasTerminal) {
+-        reveal(agentId);
++        reveal(ownerId);
+         setView('terminal');
+         return;
+       }
+       os.selectAndFollow(agentId);
+       // Pre-select the pane (and the card highlight) without leaving the office.
+-      reveal(agentId);
++      reveal(ownerId);
+     },
+     [getOfficeState, terminalAgentIds, view, reveal],
+   );
+diff --git a/webview-ui/src/office/engine/officeState.ts b/webview-ui/src/office/engine/officeState.ts
+index 1905434..2f7d7bb 100644
+--- a/webview-ui/src/office/engine/officeState.ts
++++ b/webview-ui/src/office/engine/officeState.ts
+@@ -447,7 +447,10 @@ export class OfficeState {
+     directoryName?: string,
+     nearAgentId?: number,
+   ): void {
+-    if (this.characters.has(id)) return;
++    const existing = this.characters.get(id);
++    if (existing && existing.matrixEffect !== 'despawn') return;
++    // A conversation can resume while its previous character is still fading out.
++    if (existing) this.characters.delete(id);
+ 
+     let palette: number;
+     let hueShift: number;
+@@ -583,7 +586,8 @@ export class OfficeState {
+ 
+   /** The agent that owns `id`'s terminal: a sub-agent's parent, else itself. */
+   terminalOwnerOf(id: number): number {
+-    return this.subagentMeta.get(id)?.parentAgentId ?? id;
++    const parent = this.subagentMeta.get(id)?.parentAgentId ?? id;
++    return this.characters.get(parent)?.terminalOwnerId ?? parent;
+   }
+ 
+   removeAgent(id: number): void {
+diff --git a/webview-ui/src/office/types.ts b/webview-ui/src/office/types.ts
+index ee7e22c..b52c86e 100644
+--- a/webview-ui/src/office/types.ts
++++ b/webview-ui/src/office/types.ts
+@@ -168,6 +168,8 @@ export interface OfficeLayout {
+ }
+ 
+ export interface Character {
++  /** Multiple conversation characters can share one process terminal. */
++  terminalOwnerId?: number;
+   id: number;
+   state: CharacterState;
+   dir: Direction;
+diff --git a/webview-ui/test/fleetConversations.test.ts b/webview-ui/test/fleetConversations.test.ts
+new file mode 100644
+index 0000000..da6ecdd
+--- /dev/null
++++ b/webview-ui/test/fleetConversations.test.ts
+@@ -0,0 +1,25 @@
++import { describe, expect, it } from 'vitest';
++
++import { OfficeState } from '../src/office/engine/officeState.js';
++
++describe('Fleet character terminal ownership and revival', () => {
++  it('routes siblings and their subagents to the shared process without requiring its character', () => {
++    const office = new OfficeState();
++    office.addAgent(2);
++    office.characters.get(2)!.terminalOwnerId = 1;
++    office.subagentMeta.set(-1, { parentAgentId: 2, parentToolId: 'task' });
++    expect(office.terminalOwnerOf(2)).toBe(1);
++    expect(office.terminalOwnerOf(-1)).toBe(1);
++    expect(office.terminalOwnerOf(99)).toBe(99);
++  });
++  it('revives the same ID even if its hide animation has not finished', () => {
++    const office = new OfficeState();
++    office.addAgent(1, 2, 30);
++    office.removeAgent(1);
++    expect(office.characters.get(1)?.matrixEffect).toBe('despawn');
++    office.addAgent(1, 2, 30);
++    expect(office.characters.size).toBe(1);
++    expect(office.characters.get(1)?.matrixEffect).not.toBe('despawn');
++    expect(office.characters.get(1)?.palette).toBe(2);
++  });
++});
