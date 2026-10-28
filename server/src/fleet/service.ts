@@ -112,12 +112,17 @@ export class FleetService {
       throw new Error(this.pty.unavailableReason() ?? 'Terminal unavailable');
     if (this.liveRunIds().length >= FLEET_MAX_RUNNING)
       throw new Error('Concurrent agent limit reached');
-    while (this.runs.size >= FLEET_MAX_HISTORY) {
-      const oldest = [...this.runs.values()].find(({ run }) => run.status !== 'running');
-      if (!oldest) throw new Error('Fleet history is full');
-      this.dismiss(oldest.run.id);
-    }
-    if (this.conversations.size >= FLEET_MAX_CONVERSATIONS)
+    // Plan eviction without mutating history. A rejected request or failed spawn must
+    // leave all existing runs, conversations and their logs intact.
+    const evictions = [...this.runs.values()]
+      .filter(({ run }) => run.status !== 'running')
+      .slice(0, Math.max(0, this.runs.size - FLEET_MAX_HISTORY + 1));
+    if (this.runs.size - evictions.length >= FLEET_MAX_HISTORY)
+      throw new Error('Fleet history is full');
+    const retainedConversations =
+      this.conversations.size -
+      evictions.reduce((count, state) => count + state.conversations.size, 0);
+    if (retainedConversations >= FLEET_MAX_CONVERSATIONS)
       throw new Error('Conversation limit reached; remove finished Agent groups');
     const sessionId = randomUUID();
     const launchProfile =
@@ -129,6 +134,7 @@ export class FleetService {
       this.reserveClaudeSession?.(sessionId, profile.cwd);
     const id = this.store.nextAgentId.current++;
     const session = this.pty.create({ agentId: id, ...command });
+    for (const eviction of evictions) this.dismiss(eviction.run.id);
     const run: FleetRun = {
       id,
       profileId,
@@ -191,7 +197,10 @@ export class FleetService {
     const state = this.runs.get(runId);
     if (!state || state.run.status !== 'running') throw new Error('Agent process is not running');
     const packet = parseFleetPacket(state.run.provider, raw);
-    if (!packet.conversationId && packet.events.length === 0) return null;
+    if (packet.events.length === 0) {
+      this.appendRawEvent(state, 'Unknown event', raw);
+      if (!packet.conversationId) return null;
+    }
     let target: ConversationState | undefined;
     if (packet.conversationId) {
       const known = state.bySession.get(packet.conversationId);
@@ -227,6 +236,7 @@ export class FleetService {
         );
         state.warnedUnscoped = true;
       }
+      this.appendRawEvent(state, 'Unassigned event', raw);
       return null;
     }
     if (!target) return null;
@@ -365,6 +375,13 @@ export class FleetService {
       status: agent.isWaiting ? 'waiting' : 'active',
       awaitingInput: agent.fleetAwaitingInput,
     });
+  }
+
+  private appendRawEvent(state: RunState, label: string, raw: unknown): void {
+    // JSON escaping keeps embedded control characters inert; terminal escapes in
+    // any resulting text are stripped as an additional safeguard.
+    const text = JSON.stringify(raw) ?? String(raw);
+    this.appendRun(state, `[${label}] ${stripVTControlCharacters(text)}\n`);
   }
 
   private appendRun(state: RunState, text: string): void {

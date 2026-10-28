@@ -10,6 +10,7 @@ import { handleClientMessage } from '../src/clientMessageHandler.js';
 import { normalizeFleetEvent } from '../src/fleet/events.js';
 import {
   buildFleetCommand,
+  FLEET_MAX_HISTORY,
   FLEET_MAX_LINE,
   FLEET_MAX_OUTPUT,
   parseProfiles,
@@ -238,6 +239,46 @@ describe('concurrent managed agents', () => {
   });
 });
 
+describe('atomic history eviction', () => {
+  it.each(['', 'bad\0prompt'])('preserves full history when prompt %j is rejected', (prompt) => {
+    vi.useFakeTimers();
+    const { fleet, children } = harness();
+    for (let i = 0; i < FLEET_MAX_HISTORY; i++) {
+      fleet.launch('codex', 'valid');
+      children.at(-1)!.exitListener({ exitCode: 0 });
+    }
+    const before = fleet.snapshot();
+    const oldest = before.runs[0].id;
+    const output = fleet.get(oldest)!.output;
+    expect(() => fleet.launch('codex', prompt)).toThrow();
+    expect(fleet.snapshot()).toEqual(before);
+    expect(fleet.get(oldest)!.output).toBe(output);
+    expect(children).toHaveLength(FLEET_MAX_HISTORY);
+  });
+
+  it('preserves history on spawn failure and evicts only after a successful launch', () => {
+    vi.useFakeTimers();
+    const { fleet, children, pty } = harness();
+    for (let i = 0; i < FLEET_MAX_HISTORY; i++) {
+      fleet.launch('codex', 'valid');
+      children.at(-1)!.exitListener({ exitCode: 0 });
+    }
+    const before = fleet.snapshot();
+    const oldest = before.runs[0].id;
+    vi.spyOn(pty, 'create').mockImplementationOnce(() => {
+      throw new Error('spawn failed');
+    });
+    expect(() => fleet.launch('codex', 'valid')).toThrow('spawn failed');
+    expect(fleet.snapshot()).toEqual(before);
+    expect(children).toHaveLength(FLEET_MAX_HISTORY);
+    const next = fleet.launch('codex', 'valid');
+    expect(fleet.get(oldest)).toBeUndefined();
+    expect(fleet.getConversation(oldest)).toBeUndefined();
+    expect(fleet.get(next)?.status).toBe('running');
+    expect(fleet.snapshot().runs).toHaveLength(FLEET_MAX_HISTORY);
+  });
+});
+
 describe('fleet HTTP permissions', () => {
   it('requires token AND trusted host/origin; rejects commands outside configured profiles', async () => {
     const { fleet, children } = harness();
@@ -333,6 +374,35 @@ describe('multiplexed conversations', () => {
     expect(store.get(sibling)?.activeToolIds.size).toBe(1);
     expect(fleet.get(a)?.output).toContain('Unassigned');
     expect(fleet.getConversation(b)?.status).toBe('running');
+  });
+  it('retains unassigned and unknown JSON only in the bounded process log', () => {
+    const { fleet, children } = harness([custom]);
+    const run = fleet.launch('custom', 'start');
+    const first = fleet.ingest(run, packet('a', { type: 'text', text: 'scoped-a' }))!;
+    const second = fleet.ingest(run, packet('b', { type: 'text', text: 'scoped-b' }))!;
+    const beforeA = { ...fleet.getConversation(first)! };
+    const beforeB = { ...fleet.getConversation(second)! };
+    children[0].send({ type: 'text', text: 'unscoped-text' });
+    children[0].send({ type: 'error', message: 'unscoped-error' });
+    children[0].send({ type: 'future.event', diagnostic: 'unknown-body' });
+    children[0].send(packet('a', { type: 'future.event', diagnostic: 'unknown-scoped' }));
+    const output = fleet.get(run)!.output;
+    for (const marker of ['unscoped-text', 'unscoped-error', 'unknown-body', 'unknown-scoped'])
+      expect(output.split(marker)).toHaveLength(2);
+    expect(output.split('scoped-a')).toHaveLength(2);
+    expect(fleet.getConversation(first)).toEqual(beforeA);
+    expect(fleet.getConversation(second)).toEqual(beforeB);
+    // HTTP integrations use the same ingestion path and get the same preservation.
+    expect(fleet.ingest(run, { type: 'text', text: 'http-unassigned' })).toBeNull();
+    expect(fleet.get(run)!.output).toContain('http-unassigned');
+    fleet.ingest(run, {
+      type: 'future.event',
+      diagnostic: '\u001b[31m' + 'x'.repeat(FLEET_MAX_OUTPUT * 2),
+    });
+    expect(fleet.get(run)!.output).not.toContain('\u001b');
+    expect(fleet.get(run)!.output.length).toBeLessThanOrEqual(FLEET_MAX_OUTPUT);
+    expect(fleet.getConversation(first)).toEqual(beforeA);
+    expect(fleet.getConversation(second)).toEqual(beforeB);
   });
   it('supports native identities and legacy untagged events for a single session', () => {
     const { fleet, children } = harness();
