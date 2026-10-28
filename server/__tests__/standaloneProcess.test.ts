@@ -120,6 +120,80 @@ describe('standalone fixture process lifecycle', () => {
     );
   });
 
+  it('falls back to the owned process handle when Windows taskkill itself times out', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    trackOwnedProcess(child.asChild());
+    vi.mocked(execFile).mockImplementation((...args: unknown[]) => {
+      const callback = args[3] as (error: Error | null) => void;
+      queueMicrotask(() =>
+        callback(
+          Object.assign(new Error('taskkill timed out'), { killed: true, signal: 'SIGTERM' }),
+        ),
+      );
+      return {} as ChildProcess;
+    });
+    child.kill.mockImplementation((signal) => {
+      child.killed = true;
+      queueMicrotask(() => {
+        child.signalCode = signal;
+        child.emit('exit', null, signal);
+        child.emit('close', null, signal);
+      });
+      return true;
+    });
+    const stopping = stopProcess(child.asChild());
+    await vi.advanceTimersByTimeAsync(2_000);
+    await stopping;
+    expect(execFile).toHaveBeenCalledTimes(2);
+    expect(child.kill).toHaveBeenCalledExactlyOnceWith('SIGKILL');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not report success when Windows commands and handle termination never produce close', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    trackOwnedProcess(child.asChild());
+    vi.mocked(execFile).mockImplementation((...args: unknown[]) => {
+      const callback = args[3] as (error: Error | null) => void;
+      queueMicrotask(() =>
+        callback(
+          Object.assign(new Error('taskkill timed out'), { killed: true, signal: 'SIGTERM' }),
+        ),
+      );
+      return {} as ChildProcess;
+    });
+    const outcome = stopProcess(child.asChild()).catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(3_000);
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error)).toContain('closeObserved=false');
+    expect(String(error)).toContain('timedOutOrKilled=true');
+    expect(child.kill).toHaveBeenCalledExactlyOnceWith('SIGKILL');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not fall back to a handle after taskkill races with an observed exit', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const child = new FakeChild();
+    trackOwnedProcess(child.asChild());
+    vi.mocked(execFile).mockImplementation((...args: unknown[]) => {
+      const callback = args[3] as (error: Error | null) => void;
+      queueMicrotask(() => {
+        child.exitCode = 0;
+        child.emit('exit', 0, null);
+        child.emit('close', 0, null);
+        callback(new Error('process no longer exists'));
+      });
+      return {} as ChildProcess;
+    });
+    await stopProcess(child.asChild());
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(execFile).toHaveBeenCalledTimes(1);
+  });
+
   it('targets only the live owned PID tree on Windows and waits for close', async () => {
     Object.defineProperty(process, 'platform', { value: 'win32' });
     const child = new FakeChild();

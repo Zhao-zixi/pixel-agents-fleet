@@ -20,6 +20,7 @@ import {
   getSettingChecked,
   openDirectoryModal,
   openLaunchDrawer,
+  openSettingsModal,
   setSettings,
   SHOW_START_DIRECTORY_LABEL,
   SKIP_PERMISSIONS_LABEL,
@@ -381,17 +382,56 @@ test.describe('Standalone / permission posture', () => {
     // A second tokened office, open BEFORE the change: it loaded "off" and
     // must not keep showing that while every launch now skips permissions.
     const other = await page.context().newPage();
-    await other.goto(page.url());
-    await expect(other.getByRole('button', { name: 'Settings' })).toBeVisible({ timeout: 30_000 });
-    expect(await getSettingChecked(other, SKIP_PERMISSIONS_LABEL)).toBe(false);
+    let initialSetting: boolean | undefined;
+    let broadcastSetting: boolean | undefined;
+    // The Settings button (and its default "off") can render before the socket
+    // handshake. Observe actual server frames so this tests an already-connected
+    // office, not the timing of two pages mounting on a busy CI worker.
+    other.on('websocket', (socket) => {
+      if (new URL(socket.url()).pathname !== '/ws') return;
+      socket.on('framereceived', ({ payload }) => {
+        try {
+          const message = JSON.parse(
+            typeof payload === 'string' ? payload : payload.toString('utf8'),
+          ) as { type?: string; bypassPermissions?: boolean; enabled?: boolean };
+          if (message.type === 'settingsLoaded') initialSetting = message.bypassPermissions;
+          if (message.type === 'bypassPermissionsUpdated') broadcastSetting = message.enabled;
+        } catch {
+          // Other socket traffic is irrelevant; no server or client state is injected.
+        }
+      });
+    });
+    try {
+      await other.goto(page.url());
+      await expect
+        .poll(() => initialSetting, {
+          timeout: 30_000,
+          message: 'Second office receives its initial permission posture over WebSocket',
+        })
+        .toBe(false);
+      const settingsModal = await openSettingsModal(other);
+      const indicator = settingsModal
+        .locator('button', { hasText: SKIP_PERMISSIONS_LABEL })
+        .locator('span')
+        .last();
+      await expect(indicator).toHaveText('');
 
-    await setSettings(page, { bypassPermissions: true });
+      await setSettings(page, { bypassPermissions: true });
 
-    // No reload: the change has to reach the open office by itself.
-    await expect
-      .poll(() => getSettingChecked(other, SKIP_PERMISSIONS_LABEL), { timeout: 10_000 })
-      .toBe(true);
-    await other.close();
+      // No reload or repeated modal toggling: require both the actual broadcast
+      // and its rendered result in the receiver's already-open Settings modal.
+      await expect
+        .poll(() => broadcastSetting, {
+          timeout: 10_000,
+          message: 'Permission update is broadcast to the already-connected second office',
+        })
+        .toBe(true);
+      await other.bringToFront();
+      await expect(indicator).toHaveText('x', { timeout: 10_000 });
+    } finally {
+      // Also release this office's WebSocket when an assertion fails.
+      await other.close();
+    }
   });
 });
 
