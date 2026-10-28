@@ -4,6 +4,7 @@ import path from 'path';
 
 import { getExternalNarrationLogPath } from './external-monitor';
 import { waitForHookServer } from './hooks';
+import { trackOwnedProcess } from './standaloneProcess';
 import { narrate } from './test-narration';
 
 const DEFAULT_HOLD_OPEN_MS = 30_000;
@@ -365,12 +366,14 @@ export async function spawnExternalClaudeScenario(options: {
   const narrationLog = getExternalNarrationLogPath(options.tmpHome);
   fs.mkdirSync(path.dirname(narrationLog), { recursive: true });
   const narrationFd = fs.openSync(narrationLog, 'a');
-  const child = spawn(claudeBinary, ['--session-id', options.sessionId], {
-    cwd: options.workspaceDir,
-    env,
-    shell: process.platform === 'win32',
-    stdio: ['ignore', narrationFd, 'pipe'],
-  });
+  const child = trackOwnedProcess(
+    spawn(claudeBinary, ['--session-id', options.sessionId], {
+      cwd: options.workspaceDir,
+      env,
+      shell: process.platform === 'win32',
+      stdio: ['ignore', narrationFd, 'pipe'],
+    }),
+  );
   fs.closeSync(narrationFd);
 
   // Track this child so fixture teardown can SIGTERM it if the test forgot to.
