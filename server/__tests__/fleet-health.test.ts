@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { FleetProfile } from '../../core/src/fleet.js';
+import { timelineStateAt } from '../../core/src/fleetTimeline.js';
 import { AgentStateStore } from '../src/agentStateStore.js';
 import {
   diagnoseProfile,
@@ -113,6 +114,16 @@ describe('Fleet SSH health evidence', () => {
     expect(fleet.get(id)?.transport?.remoteState).toBe('unknown');
     const statuses = fleet.snapshot().conversations.map((c) => c.status);
     expect(statuses).toEqual(['done', 'unknown']);
+    // Integrated history must preserve ambiguous SSH termination, not rewrite it
+    // as success/failure or invalidate a completed sibling.
+    const history = fleet.timeline.snapshot();
+    const states = timelineStateAt(history.events, history.events.at(-1)!.sequence, history.epoch);
+    expect(states.find((item) => item.conversationId === undefined)?.status).toBe('unknown');
+    expect(
+      states.filter((item) => item.conversationId !== undefined).map((item) => item.status),
+    ).toEqual(['done', 'unknown']);
+    expect(JSON.stringify(history)).not.toContain('user@host');
+    expect(JSON.stringify(history)).not.toContain('/project');
     expect(fleet.liveRunIds()).toEqual([]);
     fleet.dispose();
   });
