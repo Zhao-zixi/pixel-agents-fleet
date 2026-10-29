@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -10,6 +11,7 @@ import {
 } from '../../helpers/mock-claude';
 import { expectNoOverlay, expectOverlayCount, expectOverlayVisible } from '../../helpers/office';
 import { launchStandalone } from '../../helpers/standalone';
+import { stopProcess } from '../../helpers/standaloneProcess';
 import { setSettings } from '../../helpers/webview';
 
 function hookDrivenScenario(name: string, command: string) {
@@ -42,6 +44,7 @@ test.describe('Standalone / multi-server hooks', () => {
     });
 
     const standalone = await launchStandalone(page, { homeDir: tmpHome });
+    const externalProcesses: ChildProcess[] = [];
     try {
       await setSettings(page, {
         alwaysShowLabels: true,
@@ -68,13 +71,17 @@ test.describe('Standalone / multi-server hooks', () => {
 
       const extensionSessionId = 'multi-server-extension-owned';
       const extensionCommand = 'npm run extension-owned';
-      await spawnExternalClaudeScenario({
-        tmpHome,
-        workspaceDir: extensionWorkspace,
-        mockLogFile,
-        sessionId: extensionSessionId,
-        scenario: hookDrivenScenario('multi-server extension-owned session', extensionCommand),
-      });
+      externalProcesses.push(
+        (
+          await spawnExternalClaudeScenario({
+            tmpHome,
+            workspaceDir: extensionWorkspace,
+            mockLogFile,
+            sessionId: extensionSessionId,
+            scenario: hookDrivenScenario('multi-server extension-owned session', extensionCommand),
+          })
+        ).process,
+      );
 
       await expectOverlayVisible(frame, `Running: ${extensionCommand}`);
       await page.waitForTimeout(500);
@@ -82,13 +89,20 @@ test.describe('Standalone / multi-server hooks', () => {
 
       const standaloneSessionId = 'multi-server-standalone-owned';
       const standaloneCommand = 'npm run standalone-owned';
-      await spawnExternalClaudeScenario({
-        tmpHome,
-        workspaceDir: standalone.workspaceDir,
-        mockLogFile,
-        sessionId: standaloneSessionId,
-        scenario: hookDrivenScenario('multi-server standalone-owned session', standaloneCommand),
-      });
+      externalProcesses.push(
+        (
+          await spawnExternalClaudeScenario({
+            tmpHome,
+            workspaceDir: standalone.workspaceDir,
+            mockLogFile,
+            sessionId: standaloneSessionId,
+            scenario: hookDrivenScenario(
+              'multi-server standalone-owned session',
+              standaloneCommand,
+            ),
+          })
+        ).process,
+      );
 
       await expectOverlayVisible(page, `Running: ${standaloneCommand}`);
       await frame.waitForTimeout(500);
@@ -97,6 +111,17 @@ test.describe('Standalone / multi-server hooks', () => {
       await expectOverlayCount(frame, 1);
       await expectOverlayCount(page, 1);
     } finally {
+      // The external mock owns a cwd inside the standalone workspace. Its
+      // process/stdio must close BEFORE that directory is removed on Windows;
+      // the outer fixture's later cleanup is too late for this inner fixture.
+      const results = await Promise.allSettled(externalProcesses.map(stopProcess));
+      await standalone.stopHost();
+      const failures = results.filter((result) => result.status === 'rejected');
+      if (failures.length > 0)
+        throw new AggregateError(
+          failures.map((result) => result.reason),
+          'External mock cleanup failed',
+        );
       await standalone.cleanup();
     }
   });

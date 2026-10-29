@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer, useState } from 'react';
 
 import type { FleetConversation, FleetRun, FleetSnapshot } from '../../../core/src/fleet.js';
 import { FLEET_REFRESH_MS } from '../constants.js';
+import { fleetPanelErrorReducer, initialFleetPanelErrors } from '../fleet/panelErrors.js';
 import { serverToken } from '../transport/serverToken.js';
 import { Button } from './ui/Button.js';
 
@@ -35,7 +36,7 @@ export function FleetPanel({ onFocus }: { onFocus: (id: number) => void }) {
   const [selected, setSelected] = useState<Selection | null>(null);
   const [detail, setDetail] = useState<FleetConversation | FleetRun | null>(null);
   const [history, setHistory] = useState(false);
-  const [error, setError] = useState('');
+  const [errors, dispatchError] = useReducer(fleetPanelErrorReducer, initialFleetPanelErrors);
   const [pending, setPending] = useState(false);
   const [connected, setConnected] = useState(false);
 
@@ -48,7 +49,6 @@ export function FleetPanel({ onFocus }: { onFocus: (id: number) => void }) {
         const next = await request<FleetSnapshot>();
         if (!alive) return;
         setSnapshot(next);
-        setConnected(true);
         if (selected) {
           if (next[selected.kind].some((r) => r.id === selected.id)) {
             const item = await request<FleetConversation | FleetRun>(
@@ -60,10 +60,14 @@ export function FleetPanel({ onFocus }: { onFocus: (id: number) => void }) {
             setDetail(null);
           }
         }
+        if (alive) {
+          setConnected(true);
+          dispatchError({ type: 'refreshSucceeded' });
+        }
       } catch (e) {
         if (alive) {
           setConnected(false);
-          setError(String(e));
+          dispatchError({ type: 'refreshFailed', message: String(e) });
         }
       }
       if (alive) timer = setTimeout(refresh, FLEET_REFRESH_MS);
@@ -77,12 +81,15 @@ export function FleetPanel({ onFocus }: { onFocus: (id: number) => void }) {
 
   const perform = useCallback(async (action: () => Promise<unknown>) => {
     setPending(true);
-    setError('');
+    dispatchError({ type: 'actionStarted' });
     try {
       await action();
       setSnapshot(await request<FleetSnapshot>());
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      dispatchError({
+        type: 'actionFailed',
+        message: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setPending(false);
     }
@@ -176,9 +183,14 @@ export function FleetPanel({ onFocus }: { onFocus: (id: number) => void }) {
             </Button>
           </form>
           {!snapshot?.available && snapshot?.reason && <p role="status">{snapshot.reason}</p>}
-          {error && (
+          {errors.connection && (
             <p className="fleet-error" role="alert">
-              {error}
+              连接错误：{errors.connection}
+            </p>
+          )}
+          {errors.action && (
+            <p className="fleet-error" role="alert">
+              操作失败：{errors.action}
             </p>
           )}
           <div className="fleet-title fleet-history">

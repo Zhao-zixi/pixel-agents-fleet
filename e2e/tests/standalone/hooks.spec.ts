@@ -76,6 +76,13 @@ test.describe('Standalone / hooks', () => {
       session_id: sessionId,
       hook_event_name: 'PostToolUse',
     });
+    // HTTP hook acknowledgement precedes delivery on the independent WebSocket.
+    // Wait for this exact tool/agent pair; keep other frames for later assertions.
+    await standalone.waitForMessage({
+      type: 'agentToolDone',
+      toolId: toolStart!.toolId,
+      id: toolStart!.id,
+    });
     const postToolMessages = await standalone.drainMessages();
     expect(
       postToolMessages.some(

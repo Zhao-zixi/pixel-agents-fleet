@@ -7,6 +7,10 @@ import path from 'node:path';
 import { expect, type Page } from '@playwright/test';
 
 import { type HookServerConfig, waitForHookServer } from './hooks';
+import { type RecordedServerMessage, waitForRecordedMessage } from './recordedMessages';
+import { removeOwnedDirectory, stopProcess, trackOwnedProcess } from './standaloneProcess';
+
+export type { RecordedServerMessage } from './recordedMessages';
 
 const REPO_ROOT = path.join(__dirname, '../..');
 const STANDALONE_CLI = path.resolve(REPO_ROOT, 'dist', 'cli.js');
@@ -14,11 +18,6 @@ const MOCK_CLAUDE_PATH = path.join(REPO_ROOT, 'e2e/fixtures/mock-claude');
 const MOCK_CLAUDE_CMD_PATH = path.join(REPO_ROOT, 'e2e/fixtures/mock-claude.cmd');
 const MOCK_CLAUDE_RUNNER_PATH = path.join(REPO_ROOT, 'e2e/fixtures/mock-claude-runner.cjs');
 const TAIL_FOLLOW_PATH = path.join(REPO_ROOT, 'e2e/fixtures/tail-follow.cjs');
-
-export interface RecordedServerMessage {
-  type: string;
-  [key: string]: unknown;
-}
 
 export interface StandaloneSession {
   tmpHome: string;
@@ -31,6 +30,11 @@ export interface StandaloneSession {
   getHostLogs: () => string;
   cleanup: () => Promise<void>;
   drainMessages: () => Promise<RecordedServerMessage[]>;
+  /** Wait for matching protocol identity without consuming any buffered messages. */
+  waitForMessage: (
+    match: Partial<RecordedServerMessage>,
+    timeoutMs?: number,
+  ) => Promise<RecordedServerMessage>;
   /** Stop the host process, breaking its WebSocket connections, without disposing
    *  the browser page or its recorded message buffer. Fallback for tests that need
    *  to observe a real connection drop when `context.setOffline` does not reliably
@@ -167,40 +171,24 @@ function spawnStandaloneHost(args: {
     env.PATH = `${binDir}${path.delimiter}${process.env.PATH ?? ''}`;
     env.PIXEL_AGENTS_NODE_BIN = process.execPath;
   }
-  return spawn(
-    process.execPath,
-    [
-      STANDALONE_CLI,
-      '--port',
-      args.hostPort.toString(),
-      '--host',
-      '127.0.0.1',
-      ...(args.cliArgs ?? []),
-    ],
-    {
-      cwd: args.workspaceDir,
-      env,
-      stdio: 'pipe',
-    },
+  return trackOwnedProcess(
+    spawn(
+      process.execPath,
+      [
+        STANDALONE_CLI,
+        '--port',
+        args.hostPort.toString(),
+        '--host',
+        '127.0.0.1',
+        ...(args.cliArgs ?? []),
+      ],
+      {
+        cwd: args.workspaceDir,
+        env,
+        stdio: 'pipe',
+      },
+    ),
   );
-}
-
-async function stopProcess(child: ChildProcessWithoutNullStreams): Promise<void> {
-  if (child.exitCode !== null || child.killed) {
-    return;
-  }
-  child.kill('SIGTERM');
-  await Promise.race([
-    new Promise<void>((resolve) => child.once('exit', () => resolve())),
-    delay(2_000),
-  ]);
-  if (child.exitCode === null && !child.killed) {
-    child.kill('SIGKILL');
-    await Promise.race([
-      new Promise<void>((resolve) => child.once('exit', () => resolve())),
-      delay(1_000),
-    ]);
-  }
 }
 
 /**
@@ -366,6 +354,18 @@ export async function launchStandalone(
       getHostLogs: () =>
         [hostStdout.trim(), hostStderr.trim()].filter((value) => value.length > 0).join('\n'),
       drainMessages: () => drainRecordedMessages(page),
+      waitForMessage: (match, timeoutMs) =>
+        waitForRecordedMessage(
+          () =>
+            page.evaluate(() =>
+              (
+                (window as Window & { __pixelAgentsMessages?: RecordedServerMessage[] })
+                  .__pixelAgentsMessages ?? []
+              ).slice(),
+            ),
+          match,
+          timeoutMs,
+        ),
       stopHost: async () => {
         await stopProcess(hostProcess);
       },
@@ -375,14 +375,14 @@ export async function launchStandalone(
       },
       cleanup: async () => {
         await stopProcess(hostProcess);
-        if (ownsHome) fs.rmSync(tmpHome, { recursive: true, force: true });
-        if (ownsWorkspace) fs.rmSync(workspaceDir, { recursive: true, force: true });
+        if (ownsHome) await removeOwnedDirectory(tmpHome);
+        if (ownsWorkspace) await removeOwnedDirectory(workspaceDir);
       },
     };
   } catch (error) {
     await stopProcess(hostProcess);
-    if (ownsHome) fs.rmSync(tmpHome, { recursive: true, force: true });
-    if (ownsWorkspace) fs.rmSync(workspaceDir, { recursive: true, force: true });
+    if (ownsHome) await removeOwnedDirectory(tmpHome);
+    if (ownsWorkspace) await removeOwnedDirectory(workspaceDir);
     // Setup failures never reach the fixture's log-attaching teardown, so fold
     // the host's output into the error itself — otherwise a host that dies at
     // boot on CI leaves nothing to diagnose but a connection-refused message.
