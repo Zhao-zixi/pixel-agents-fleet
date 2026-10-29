@@ -63,7 +63,16 @@ function harness(profiles: FleetProfile[] = [profile]) {
   const store = new AgentStateStore();
   const broadcasts: Record<string, unknown>[] = [];
   store.on('broadcast', (m) => broadcasts.push(m));
-  const fleet = new FleetService(profiles, store, pty);
+  const fleet = new FleetService(profiles, store, pty, undefined, {}, (p) => ({
+    status: 'unavailable',
+    host: p.ssh ?? 'local',
+    root: p.cwd,
+    key: `test:${p.id}`,
+    capturedAt: Date.now(),
+    files: [],
+    truncated: false,
+    reason: 'Workspace observation mocked; no external commands in protocol tests',
+  }));
   cleanup.push(() => fleet.dispose());
   return { children, store, fleet, pty, broadcasts };
 }
@@ -570,5 +579,33 @@ describe('multiplexed conversations', () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+describe('fleet timeline integration', () => {
+  it('records each scoped lifecycle once without retaining task or output text', () => {
+    const { fleet, children } = harness([custom]);
+    const id = fleet.launch('custom', 'private-task');
+    for (const conversationId of ['a', 'b', 'c']) {
+      children[0].send({
+        type: 'fleet.event',
+        conversationId,
+        event: { type: 'tool_start', id: 'shared', name: 'Read', input: { path: '/private/path' } },
+      });
+      children[0].send({
+        type: 'fleet.event',
+        conversationId,
+        event: { type: 'text', text: 'private-output' },
+      });
+      children[0].send({ type: 'fleet.event', conversationId, event: { type: 'done' } });
+    }
+    children[0].exitListener({ exitCode: 0 });
+    const history = fleet.timeline.snapshot();
+    expect(history.events.filter((e) => e.kind === 'launch' && e.runId === id)).toHaveLength(1);
+    expect(history.events.filter((e) => e.kind === 'conversation')).toHaveLength(3);
+    expect(history.events.filter((e) => e.kind === 'done')).toHaveLength(3);
+    expect(history.events.filter((e) => e.kind === 'text')).toHaveLength(3);
+    expect(history.events.at(-1)).toMatchObject({ kind: 'exit', status: 'done' });
+    expect(JSON.stringify(history)).not.toContain('private');
   });
 });

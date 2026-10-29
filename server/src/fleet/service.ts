@@ -7,12 +7,17 @@ import type {
   FleetRun,
   FleetSnapshot,
 } from '../../../core/src/fleet.js';
+import type {
+  FleetWorkspaceReport,
+  FleetWorkspaceSnapshot,
+} from '../../../core/src/fleetWorkspace.js';
 import { createAgentState } from '../agentState.js';
 import type { AgentStateStore } from '../agentStateStore.js';
 import { assignPaletteIfNeeded } from '../paletteAssigner.js';
 import type { PtySessionManager } from '../terminal/ptySessionManager.js';
 import type { AgentState } from '../types.js';
 import { animationTool, type FleetEvent, parseFleetPacket } from './events.js';
+import { diagnoseProfile, initialTransport, transportExit, transportOutput } from './health.js';
 import {
   buildFleetCommand,
   FLEET_ACTIVITY_TIMEOUT,
@@ -24,6 +29,8 @@ import {
   FLEET_MAX_OUTPUT,
   FLEET_MAX_RUNNING,
 } from './profiles.js';
+import { FleetTimeline, type FleetTimelineOptions } from './timeline.js';
+import { captureWorkspace, compareWorkspace } from './workspace.js';
 
 interface ConversationState {
   conversation: FleetConversation;
@@ -45,6 +52,10 @@ interface RunState {
 
 /** A run owns ONE PTY. Each conversation owns ONE character and its own tool/output state. */
 export class FleetService {
+  readonly timeline: FleetTimeline;
+  private readonly diagnostics = new Set<string>();
+
+  private readonly workspaces = new Map<number, FleetWorkspaceSnapshot>();
   private readonly runs = new Map<number, RunState>();
   private readonly conversations = new Map<number, ConversationState>();
   private readonly internalRemovals = new Set<number>();
@@ -63,7 +74,10 @@ export class FleetService {
     private readonly store: AgentStateStore,
     private readonly pty: PtySessionManager,
     private readonly reserveClaudeSession?: (sessionId: string, cwd: string) => void,
+    timelineOptions: FleetTimelineOptions = FleetTimeline.fromEnvironment(),
+    private readonly workspaceCapture: typeof captureWorkspace = captureWorkspace,
   ) {
+    this.timeline = new FleetTimeline(timelineOptions);
     store.on('agentRemoved', this.onRemoved);
   }
 
@@ -93,6 +107,29 @@ export class FleetService {
   getConversation(id: number): FleetConversation | undefined {
     return this.conversations.get(id)?.conversation;
   }
+  workspace(id: number): FleetWorkspaceReport | undefined {
+    const state = this.runs.get(id);
+    const baseline = this.workspaces.get(id);
+    const profile = this.profiles.find((p) => p.id === state?.run.profileId);
+    if (!state || !baseline || !profile) return undefined;
+    const current = compareWorkspace(baseline, this.workspaceCapture(profile));
+    const relatedRunIds = [...this.workspaces.entries()]
+      .filter(
+        ([runId, item]) =>
+          this.runs.has(runId) && item.status === 'ready' && item.key === baseline.key,
+      )
+      .map(([runId]) => runId);
+    const concurrent = relatedRunIds.filter(
+      (runId) => this.runs.get(runId)?.run.status === 'running',
+    );
+    return {
+      baseline,
+      current,
+      relatedRunIds,
+      overlapRisk: concurrent.length > 1 && current.files.length > 0,
+      attribution: 'unknown',
+    };
+  }
   liveRunIds(): number[] {
     return [...this.runs.values()].filter((r) => r.run.status === 'running').map((r) => r.run.id);
   }
@@ -103,6 +140,19 @@ export class FleetService {
         (s) => s.conversation.sessionId === sessionId || s.agent.sessionId === sessionId,
       )
     );
+  }
+
+  async diagnose(profileId: string) {
+    const profile = this.profiles.find((p) => p.id === profileId);
+    if (!profile?.ssh) throw new Error('Unknown SSH profile');
+    if (this.diagnostics.has(profileId) || this.diagnostics.size >= 4)
+      throw new Error('Diagnostic already running; try again later');
+    this.diagnostics.add(profileId);
+    try {
+      return await diagnoseProfile(profile);
+    } finally {
+      this.diagnostics.delete(profileId);
+    }
   }
 
   launch(profileId: string, prompt: string): number {
@@ -133,8 +183,11 @@ export class FleetService {
     if (profile.provider === 'claude' && !profile.ssh)
       this.reserveClaudeSession?.(sessionId, profile.cwd);
     const id = this.store.nextAgentId.current++;
+    const baseline = this.workspaceCapture(profile);
     const session = this.pty.create({ agentId: id, ...command });
     for (const eviction of evictions) this.dismiss(eviction.run.id);
+
+    this.workspaces.set(id, baseline);
     const run: FleetRun = {
       id,
       profileId,
@@ -147,6 +200,7 @@ export class FleetService {
       activity: profile.ssh ? 'SSH connecting' : 'Starting',
       startedAt: Date.now(),
       output: '',
+      transport: initialTransport(!!profile.ssh),
       ...(profile.provider === 'claude' ? { sessionId } : {}),
     };
     const state: RunState = {
@@ -160,6 +214,7 @@ export class FleetService {
       telemetry: false,
     };
     this.runs.set(id, state);
+    this.timeline.record({ runId: id, kind: 'launch', status: 'running' });
     // Reuse this placeholder for the first observed session: no duplicate startup character.
     this.createConversation(state, id, run.sessionId, prompt.trim().slice(0, 80) || profile.name);
     this.store.broadcast({ type: 'terminalSessionOpened', agentId: id });
@@ -169,25 +224,44 @@ export class FleetService {
       if (!this.runs.has(id)) return;
       if (state.buffer && !state.droppingLine) this.onLine(state, state.buffer);
       state.buffer = '';
+      if (run.transport) transportExit(run.transport, exit.exitCode, state.stopped);
+      const remoteUnknown = !!profile.ssh && (exit.exitCode === 255 || state.stopped);
       run.exitCode = exit.exitCode;
       run.endedAt = Date.now();
       const failed = [...state.conversations.values()].some(
         (s) => s.conversation.status === 'failed',
       );
-      run.status = state.stopped ? 'stopped' : exit.exitCode !== 0 || failed ? 'failed' : 'done';
-      run.activity = run.status === 'failed' ? `Failed (exit ${exit.exitCode})` : run.status;
+      run.status = remoteUnknown
+        ? 'unknown'
+        : state.stopped
+          ? 'stopped'
+          : exit.exitCode !== 0 || failed
+            ? 'failed'
+            : 'done';
+      run.activity = remoteUnknown
+        ? 'SSH channel closed; remote execution state unknown'
+        : run.status === 'failed'
+          ? `Failed (exit ${exit.exitCode})`
+          : run.status;
       for (const conversation of state.conversations.values()) {
         // Completed conversations stay completed if a sibling or the transport later fails.
         if (['running', 'waiting'].includes(conversation.conversation.status)) {
           this.finish(
             conversation,
-            state.stopped ? 'stopped' : exit.exitCode !== 0 ? 'failed' : 'done',
+            remoteUnknown
+              ? 'unknown'
+              : state.stopped
+                ? 'stopped'
+                : exit.exitCode !== 0
+                  ? 'failed'
+                  : 'done',
             run.activity,
           );
         }
       }
       this.store.broadcast({ type: 'terminalSessionClosed', agentId: id, exitCode: exit.exitCode });
       this.appendRun(state, `\n[${run.activity}]\n`);
+      this.timeline.record({ runId: id, kind: 'exit', status: run.status });
     });
     return id;
   }
@@ -291,6 +365,7 @@ export class FleetService {
       this.conversations.delete(conversationId);
     }
     this.runs.delete(id);
+    this.workspaces.delete(id);
   }
 
   dispose(): void {
@@ -337,6 +412,12 @@ export class FleetService {
     run.conversations.set(id, state);
     if (sessionId) run.bySession.set(sessionId, id);
     this.conversations.set(id, state);
+    this.timeline.record({
+      runId: run.run.id,
+      conversationId: id,
+      kind: 'conversation',
+      status: 'running',
+    });
     this.store.set(id, agent);
     this.sendInfo(state);
     this.store.broadcast({ type: 'agentStatus', id, status: 'active' });
@@ -394,6 +475,7 @@ export class FleetService {
 
   private onData(state: RunState, chunk: string): void {
     if (!this.runs.has(state.run.id)) return;
+    if (chunk && state.run.transport) transportOutput(state.run.transport, Date.now());
     if (state.run.mode === 'interactive') {
       // Terminal traffic cannot identify conversations. Use estimates only until a tagged integration takes over.
       const target = state.conversations.values().next().value as ConversationState;
@@ -518,23 +600,43 @@ export class FleetService {
         break;
     }
     run.run.activity = `${run.conversations.size} conversation(s)`;
+    if (event.kind !== 'done' && event.kind !== 'error')
+      this.timeline.record(
+        { runId: run.run.id, conversationId: c.id, kind: event.kind, status: c.status },
+        event.kind === 'tool' || event.kind === 'toolEnd' ? event.id : undefined,
+      );
   }
 
   private finish(
     state: ConversationState,
-    status: 'done' | 'failed' | 'stopped',
+    status: 'done' | 'failed' | 'stopped' | 'unknown',
     activity: string,
   ): void {
     state.conversation.status = status;
     state.conversation.activity = activity;
     state.conversation.updatedAt = Date.now();
-    this.clearTools(state, status === 'failed');
+    this.timeline.record({
+      runId: state.conversation.runId,
+      conversationId: state.conversation.id,
+      kind: status === 'failed' ? 'error' : status,
+      status,
+    });
+    this.clearTools(state, status === 'failed' || status === 'unknown');
     clearTimeout(state.archiveTimer);
     // Keep failures and questions visible for attention; completed/stopped work goes to history.
-    if (status === 'failed' && !state.conversation.visible && !state.manuallyHidden) {
+    if (
+      (status === 'failed' || status === 'unknown') &&
+      !state.conversation.visible &&
+      !state.manuallyHidden
+    ) {
       this.setConversationVisible(state.conversation.id, true, false);
     }
-    if (status !== 'failed' && state.conversation.visible && !state.manuallyHidden) {
+    if (
+      status !== 'failed' &&
+      status !== 'unknown' &&
+      state.conversation.visible &&
+      !state.manuallyHidden
+    ) {
       state.archiveTimer = setTimeout(
         () => this.setConversationVisible(state.conversation.id, false, false),
         FLEET_ARCHIVE_DELAY,

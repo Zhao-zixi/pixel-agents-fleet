@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useReducer, useState } from 'react';
 
-import type { FleetConversation, FleetRun, FleetSnapshot } from '../../../core/src/fleet.js';
+import type {
+  FleetConversation,
+  FleetDiagnostic,
+  FleetRun,
+  FleetSnapshot,
+} from '../../../core/src/fleet.js';
 import { FLEET_REFRESH_MS } from '../constants.js';
 import { fleetPanelErrorReducer, initialFleetPanelErrors } from '../fleet/panelErrors.js';
 import { serverToken } from '../transport/serverToken.js';
+import { FleetDiagnosticPanel, FleetTransportHealth } from './FleetHealth.js';
+import { FleetTimelinePanel } from './FleetTimelinePanel.js';
+import { FleetWorkspacePanel } from './FleetWorkspacePanel.js';
 import { Button } from './ui/Button.js';
 
 async function request<T>(path = '', method = 'GET', body?: unknown): Promise<T> {
@@ -25,6 +33,7 @@ const statusLabels: Record<FleetConversation['status'], string> = {
   done: '已完成',
   failed: '失败',
   stopped: '已停止',
+  unknown: '状态未知',
 };
 type Selection = { kind: 'runs' | 'conversations'; id: number };
 
@@ -121,7 +130,9 @@ export function FleetPanel({ onFocus }: { onFocus: (id: number) => void }) {
         <section className="fleet-panel pixel-scrollbar" aria-label="多 Agent 小队">
           <div className="fleet-title">
             <strong>Agent 小队</strong>
-            <span>{connected ? `${running} 个进程 · ${active} 个活跃对话` : '连接中…'}</span>
+            <span>
+              服务连接：{connected ? `${running} 个进程 · ${active} 个活跃对话` : '连接中…'}
+            </span>
           </div>
           <p className="fleet-muted">一个对话一个小人。同组对话共用终端，各自显示进度。</p>
           <form
@@ -152,6 +163,17 @@ export function FleetPanel({ onFocus }: { onFocus: (id: number) => void }) {
               <p className="fleet-path" title={profile.cwd}>
                 {profile.cwd}
               </p>
+            )}
+            {profile?.ssh && (
+              <FleetDiagnosticPanel
+                key={profile.id}
+                diagnose={() =>
+                  request<FleetDiagnostic>(
+                    `/profiles/${encodeURIComponent(profile.id)}/diagnose`,
+                    'POST',
+                  )
+                }
+              />
             )}
             {profile?.mode !== 'interactive' && (
               <>
@@ -217,6 +239,7 @@ export function FleetPanel({ onFocus }: { onFocus: (id: number) => void }) {
                   <p className="fleet-muted">
                     {run.provider} · {run.host} · {group.length} 个对话
                   </p>
+                  <FleetTransportHealth transport={run.transport} />
                   <div className="fleet-actions">
                     <Button size="sm" onClick={() => select('runs', run.id)}>
                       进程日志
@@ -311,6 +334,13 @@ export function FleetPanel({ onFocus }: { onFocus: (id: number) => void }) {
               <p className="fleet-muted">选择环境，启动第一个 Agent。</p>
             )}
           </div>
+          <FleetTimelinePanel />
+          {detail && (
+            <FleetWorkspacePanel
+              key={selected?.kind === 'runs' ? detail.id : (detail as FleetConversation).runId}
+              runId={selected?.kind === 'runs' ? detail.id : (detail as FleetConversation).runId}
+            />
+          )}
           {detail && (
             <div className="fleet-detail">
               <strong>

@@ -61,6 +61,12 @@ async function terminateWindowsTree(child: ChildProcess, force: boolean): Promis
   });
 }
 
+function describeTerminationError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error ?? 'no command error');
+  const detail = error as Error & { code?: unknown; signal?: unknown; killed?: boolean };
+  return `${error.message} (code=${String(detail.code)}, signal=${String(detail.signal)}, timedOutOrKilled=${String(detail.killed)})`;
+}
+
 /** Stop only a fixture-owned child and await close (exit alone can leave stdio handles open). */
 export async function stopProcess(child: ChildProcess): Promise<void> {
   trackOwnedProcess(child);
@@ -74,8 +80,19 @@ export async function stopProcess(child: ChildProcess): Promise<void> {
     // Do not send signals to an already exited PID, which the OS could have reused.
     if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
     try {
-      if (process.platform === 'win32') await terminateWindowsTree(child, force);
-      else child.kill(force ? 'SIGKILL' : 'SIGTERM');
+      if (process.platform === 'win32') {
+        try {
+          await terminateWindowsTree(child, force);
+        } catch (error) {
+          terminationError = error;
+        }
+        // taskkill is a separate process and can itself fail or time out on a
+        // loaded Windows runner. Do not let that leave our host alive. Node's
+        // ChildProcess.kill uses the owned process handle, rather than looking
+        // up an arbitrary PID. Tree termination is still attempted first.
+        if (force && child.exitCode === null && child.signalCode === null && !lifecycle.closed)
+          child.kill('SIGKILL');
+      } else child.kill(force ? 'SIGKILL' : 'SIGTERM');
     } catch (error) {
       terminationError = error;
     }
@@ -85,7 +102,10 @@ export async function stopProcess(child: ChildProcess): Promise<void> {
     await terminate(true);
     if (!(await waitForClose(lifecycle, 1_000))) {
       throw new Error(
-        `Fixture process ${child.pid ?? '(spawn failed)'} did not close after termination`,
+        `Fixture process ${child.pid ?? '(spawn failed)'} did not close after termination ` +
+          `(exitCode=${String(child.exitCode)}, signalCode=${String(child.signalCode)}, ` +
+          `signalSent=${child.killed}, closeObserved=${lifecycle.closed}); ` +
+          `termination=${describeTerminationError(terminationError ?? lifecycle.error)}`,
         {
           cause: terminationError ?? lifecycle.error,
         },
