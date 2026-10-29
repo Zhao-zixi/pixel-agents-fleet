@@ -254,3 +254,12 @@ node --import tsx scripts/test-fleet-ui.ts
 - https://code.claude.com/docs/en/headless
 - https://geminicli.com/docs/cli/headless/
 - https://opencode.ai/docs/cli/
+
+## CI 用量控制
+
+- 日常推送到 `main` 和针对 `main` 的 PR，只自动运行 `CI`：一个 Linux 任务，最长 10 分钟，检查协议、生成文件、类型、lint、格式、构建和单元测试。新提交会取消同分支仍在运行的旧检查。原有轻量 PR 标题检查仍保留。
+- 自动检查不安装浏览器、不运行跨平台端到端测试、不上传测试报告或缓存。完整 npm 安装包冒烟、Linux/Windows/macOS 各 3 个 E2E 分片和报告上传都移至 `Full CI (manual)`。
+- 需要完整验证时，在 GitHub Actions 中选择 `Full CI (manual)`，选择分支并明确勾选 `confirm_usage` 后手动运行。默认不勾选，因此不会启动测试任务。报告上传保留 3 天；可下载的 Allure 报告还必须单独勾选 `build_report`；不会部署到 Vercel 或自动发布报告链接。
+- **手动运行也会消耗 GitHub Actions 计算/存储额度，可能收费。轻量检查也不是“保证免费”。** 运行前先确认账户的免费额度和预算；本改动不修改付款方式、支出上限、仓库可见性或安全设置。
+- Dependabot 的 npm 和 GitHub Actions **版本升级**暂停（`open-pull-requests-limit: 0`），既有升级 PR 不关闭、不合并；安全更新设置不变，安全更新不受此版本升级限额控制。徽章定时任务取消，仍可手动启动。
+- 本地验证用量策略：`node scripts/check-ci-policy.mjs --self-test`。历史检查记录和已经消耗的额度不会因本配置改动而消失；若账户已禁止启动 Actions，轻量检查仍可能无法启动。
