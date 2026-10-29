@@ -78,13 +78,13 @@ try {
   assert.ok(page.ok && (await page.text()).includes('<html'), 'Packaged web UI missing');
   console.log('Windows portable smoke passed: bundled Node, native PTY, CLI, HTTP and web UI.');
 } finally {
-  if (child && child.exitCode === null) {
+  if (child && child.exitCode === null && child.signalCode === null) {
     child.kill();
     await Promise.race([
       new Promise((resolve) => child.once('exit', resolve)),
       new Promise((resolve) => setTimeout(resolve, 3000)),
     ]);
-    if (child.exitCode === null)
+    if (child.exitCode === null && child.signalCode === null)
       execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
   }
   fs.rmSync(home, { recursive: true, force: true });
