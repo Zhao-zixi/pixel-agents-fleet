@@ -14,7 +14,7 @@ function readYaml(path) {
   return document.toJS();
 }
 
-export function checkPolicy({ automatic, full, dependabot, badges }) {
+export function checkPolicy({ automatic, full, dependabot, badges, title }) {
   assert.deepEqual(Object.keys(automatic.on).sort(), ['pull_request', 'push']);
   assert.deepEqual(Object.keys(automatic.jobs), ['ci']);
   const ci = automatic.jobs.ci;
@@ -85,6 +85,9 @@ export function checkPolicy({ automatic, full, dependabot, badges }) {
   ]);
   for (const update of dependabot.updates) assert.equal(update['open-pull-requests-limit'], 0);
   assert.deepEqual(Object.keys(badges.on), ['workflow_dispatch']);
+  assert.deepEqual(Object.keys(title.jobs), ['check']);
+  assert.equal(title.jobs.check['runs-on'], 'ubuntu-latest');
+  assert.ok(title.jobs.check['timeout-minutes'] > 0 && title.jobs.check['timeout-minutes'] <= 2);
 }
 
 const policy = {
@@ -92,11 +95,18 @@ const policy = {
   full: readYaml('.github/workflows/ci-full.yml'),
   dependabot: readYaml('.github/dependabot.yml'),
   badges: readYaml('.github/workflows/update-badges.yml'),
+  title: readYaml('.github/workflows/pr-title.yml'),
 };
 checkPolicy(policy);
 
 if (process.argv.includes('--self-test')) {
   const mutations = [
+    (p) => {
+      delete p.title.jobs.check['timeout-minutes'];
+    },
+    (p) => {
+      p.title.jobs.check['timeout-minutes'] = 360;
+    },
     (p) => {
       p.full.on.push = {};
     },
@@ -130,4 +140,6 @@ if (process.argv.includes('--self-test')) {
   }
   console.log(`CI policy: ${mutations.length} regression guards passed`);
 }
-console.log('CI policy: automatic=1 Linux job; full matrix/report=manual; version updates=paused');
+console.log(
+  'CI policy: automatic=1 Linux CI job + bounded PR title check; full matrix/report=manual; version updates=paused',
+);
