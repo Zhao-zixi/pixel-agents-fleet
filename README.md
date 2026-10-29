@@ -1,240 +1,165 @@
-<h1 align="center">
-  <a href="https://github.com/pixel-agents-hq/pixel-agents/discussions">
-    <img src="webview-ui/public/banner.png" alt="Pixel Agents">
-  </a>
-</h1>
+# Pixel Agents Fleet
 
-<h2 align="center">The most playful way to orchestrate your agents</h2>
+**把本地与远程的多个 AI Agent、多个对话，放进同一个像素办公室。**
 
-<div align="center">
+由 [Zhao-zixi](https://github.com/Zhao-zixi) 维护的 Pixel Agents Fleet，在上游 Pixel Agents 的像素办公室基础上，增加多 Agent 小队、SSH 环境、多对话角色、事件时间线和工作区改动视图。**Fleet 功能运行在独立的浏览器模式中**；现有 VS Code 扩展代码保留，但扩展内暂未加入 Fleet 面板。
 
-[![version](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2Fpablodelucca%2F3cd28398fa4a2c0a636e1d51d41aee39%2Fraw%2Fversion.json)](https://github.com/pixel-agents-hq/pixel-agents/releases)
-[![marketplaces](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2Fpablodelucca%2F3cd28398fa4a2c0a636e1d51d41aee39%2Fraw%2Finstalls.json)](https://marketplace.visualstudio.com/items?itemName=pablodelucca.pixel-agents)
-[![npm downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2Fpablodelucca%2F3cd28398fa4a2c0a636e1d51d41aee39%2Fraw%2Fnpm-downloads.json)](https://www.npmjs.com/package/pixel-agents)
-[![stars](https://img.shields.io/github/stars/pixel-agents-hq/pixel-agents?logo=github&color=0183ff&style=flat)](https://github.com/pixel-agents-hq/pixel-agents/stargazers)
-[![license](https://img.shields.io/github/license/pixel-agents-hq/pixel-agents?color=0183ff&style=flat)](https://github.com/pixel-agents-hq/pixel-agents/blob/main/LICENSE)
-[![discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white&style=flat)](https://discord.gg/Yk7jXebv9H)
+[下载 Windows 版本](https://github.com/Zhao-zixi/pixel-agents-fleet/releases/latest) · [问题与建议](https://github.com/Zhao-zixi/pixel-agents-fleet/issues) · [详细接入文档](README.fleet.zh-CN.md) · [MIT 许可证](LICENSE)
 
-</div>
+![像素办公室界面](webview-ui/public/office.png)
 
-<div align="center">
-<a href="https://marketplace.visualstudio.com/items?itemName=pablodelucca.pixel-agents">🛒 VS Code Marketplace</a> • <a href="https://open-vsx.org/extension/pablodelucca/pixel-agents">🛒 Open VSX</a> • <a href="https://www.npmjs.com/package/pixel-agents">📦 npm</a> • <a href="https://discord.gg/Yk7jXebv9H">👾 Discord</a> • <a href="https://github.com/pixel-agents-hq/pixel-agents/discussions">💬 Discussions</a> • <a href="CONTRIBUTING.md">🤝 Contributing</a> • <a href="CHANGELOG.md">📋 Changelog</a>
-</div>
+> 上图展示基础办公室界面。Fleet 的进程分组、会话和诊断入口位于「多 Agent 小队」面板。
 
-<br/>
+## 能做什么
 
-Pixel Agents turns the AI coding agents running in your terminals into animated pixel-art characters working in a tiny office. They walk to their desks, sit down, type when they're editing files, read when they're searching, and flag you visually when they're stuck waiting for input.
+- **多种 Agent 并行运行**：提供 Claude Code、Codex、Gemini、OpenCode 配置，也能接入自定义 CLI。
+- **一个活跃对话一个小人**：同一 Agent 进程的多个对话分别展示状态和输出，共享一个终端；支持隐藏、恢复及已完成角色自动收起。
+- **本地 + SSH**：不同项目目录、不同远程主机统一管理，沿用现有 OpenSSH 配置。
+- **事件时间线**：按进程或对话查看状态历史，可选持久化状态元数据；回放不会重新执行任务。
+- **SSH 状态诊断**：区分连接状态和 Agent 状态，提供只读连接、目录与命令检查；断线后的远端执行状态可能为「未知」。
+- **工作区改动**：只读查看 Git 差异、启动前已有改动及共享工作区的潜在冲突，不自动提交或回滚。
+- **可编辑的像素办公室**：布置桌椅、地板、墙面和区域，导入导出布局。
 
-It ships in two forms from the same codebase:
+多对话拆分依赖 Agent 输出中的会话 ID，并不是把任意终端文字自动识别成多个对话。默认的一次性 CLI 调用通常仍对应一个对话。自定义事件协议见[详细文档](README.fleet.zh-CN.md#自定义-agent-的多对话事件)。
 
-- **VS Code extension** — [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=pablodelucca.pixel-agents) and [Open VSX](https://open-vsx.org/extension/pablodelucca/pixel-agents). Agents launch into VS Code terminals; characters render in the panel area.
-- **Standalone CLI** — `npx pixel-agents` starts a local server and serves the same office as a browser app, useful for tmux, remote, and non-VS Code workflows.
+## Windows 快速开始
 
-The architecture is fully agent-agnostic and editor-agnostic: a typed `HookProvider` interface defines the integration boundary so adding a new AI tool is a single subdirectory of code. Claude Code is the reference implementation today; Codex, Gemini, Cursor, and others are on the roadmap.
+优先提供 **Windows x64 便携 ZIP**。这不是签名安装器，也不是单文件 EXE。
 
-![Pixel Agents screenshot](webview-ui/public/office.png)
+1. 在 [Releases](https://github.com/Zhao-zixi/pixel-agents-fleet/releases/latest) 下载 Windows x64 ZIP，解压到可写目录。
+2. 双击 `start-fleet.cmd`。
+3. 打开终端打印的完整本机 URL，保留其中的 `?token=...`。
+4. 点击「多 Agent 小队」，选择环境并启动任务。
 
-## Features
+便携包包含 Node.js 运行时，无需另外安装 Node.js。但它**不包含 Agent CLI、模型账号或 SSH 配置**：请先安装并登录你要使用的 Agent，确认在终端里可以正常运行。使用 SSH 功能还需要本机 OpenSSH 客户端以及已经验证的远程主机配置。
 
-- **One agent, one character** — every Claude Code terminal gets its own animated character
-- **Live activity tracking** — characters animate based on what the agent is actually doing (writing, reading, running commands)
-- **Office layout editor** — design your office with floors, walls, and furniture using a built-in editor
-- **Speech bubbles** — visual indicators when an agent is waiting for input or awaiting permission
-- **Sound notifications** — optional chimes when an agent finishes its turn or requests permission
-- **Sub-agents and Agent Teams** — see ephemeral sub-agents and persistent Claude teammates as separate characters, including team roles and lifecycle changes
-- **Persistent layouts** — your office design is saved and shared across VS Code windows
-- **Shared layout and assets** — import/export layouts and load external character, pet, and furniture packs
-- **Areas** — paint named areas onto the office, map workspace folders to them, and new agents sit inside the areas mapped to their folder
-- **Diverse characters** — 6 diverse characters. These are based on the amazing work of [JIK-A-4, Metro City](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack).
+默认配置使用服务的启动工作目录。操作真实项目时，推荐明确指定配置文件，不要把解压目录误当成项目目录。
 
-<p align="center">
-  <img src="webview-ui/public/characters.png" alt="Pixel Agents characters" width="320" height="72" style="image-rendering: pixelated;">
-</p>
+### 配置自己的项目
 
-## Where This Is Going
+创建 `fleet.config.json`，例如：
 
-The vision is: play a game, build a product. Two goals follow from it: to build a familiar, intuitive interface for running and orchestrating a lot of agents; and to make the hours you spend doing it feel less like administration and more like play.
-
-Roughly three stages get there:
-
-1. **Everywhere, with everything.** Today it's Claude Code in VS Code or the browser. It should be whatever agent you run, wherever you work. A new CLI is a subdirectory, not a rewrite — this is where help is most useful right now.
-2. **Actually a game.** Health bars for rate limits and token budgets. Scores for whatever you care about. Furniture that _does_ things. Offices you open like save files, one per project.
-3. **Expand the orchestration frontier.** Orchestrator characters. Form a team by dragging a box around them. Hand work between agents. Point them at a board and let them pick up tasks themselves.
-
-Most of this is still ahead. See [Issues](https://github.com/pixel-agents-hq/pixel-agents/issues) and [Discussions](https://github.com/pixel-agents-hq/pixel-agents/discussions) for what's open, and [CONTRIBUTING.md](CONTRIBUTING.md) to jump in.
-
-## Requirements
-
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and configured
-- **VS Code extension:** VS Code 1.105.0 or later
-- **Standalone CLI:** Node.js 20 or later
-- Windows, Linux, or macOS
-
-## Getting Started
-
-### VS Code extension
-
-1. Install Pixel Agents from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=pablodelucca.pixel-agents) or [Open VSX](https://open-vsx.org/extension/pablodelucca/pixel-agents).
-2. Open the **Pixel Agents** panel beside the terminal.
-3. Click **+ Agent** to open its drawer of **Directories**, then click one to launch Claude Code in it. Your workspace folders are listed there once you turn on **Settings → Show Workspace Folders**; **+ Directory** adds your own (a name, a path, and optionally the Areas its agents should sit in), and the pencil on a row you added edits or deletes it.
-
-To use Claude with `--dangerously-skip-permissions`, turn on **Settings → Skip Permissions**. It stays on for every agent launched from that host until you turn it off. Only use this when you accept the security implications.
-
-Pixel Agents also detects Claude sessions started outside the extension. Turn on **Settings → Watch All Sessions** to include sessions from other workspaces.
-
-### Standalone CLI
-
-Run Pixel Agents from the workspace whose Claude sessions you want to see:
-
-```bash
-cd /path/to/your/project
-npx pixel-agents
+```json
+[
+  {
+    "id": "local-codex",
+    "name": "本地 Codex",
+    "provider": "codex",
+    "mode": "task",
+    "cwd": "C:\\Projects\\my-app"
+  },
+  {
+    "id": "remote-claude",
+    "name": "服务器上的 Claude",
+    "provider": "claude",
+    "mode": "task",
+    "ssh": "dev-box",
+    "cwd": "/srv/projects/my-app"
+  }
+]
 ```
 
-The CLI chooses a free local port and prints the URL. Click **+ Agent** to open the Directory drawer and click a Directory to launch Claude Code in it; the agent's terminal opens in the browser. **+ Directory** adds your own, and **Settings → Show Start Directory** lists the directory the CLI was started from. On a phone, tap the **+** card to open the same drawer and tap a Directory to launch (long-press a Directory you added to edit it). Claude Code started in your own terminal is picked up too. To install the command globally instead:
+在解压目录的命令提示符中运行：
 
-```bash
-npm install --global pixel-agents
-pixel-agents
+```bat
+start-fleet.cmd --fleet "C:\Projects\fleet.config.json"
 ```
 
-Use a fixed address or port when needed:
+JSON 中 Windows 路径的反斜杠需要写成 `\\`，或使用 `C:/Projects/my-app`。删除不需要的配置项；配置在启动时读取，修改后重启服务。
+
+### SSH 接入
+
+先在本机终端执行 `ssh dev-box`，核对主机指纹，确保登录正常、远端项目目录存在且 CLI 可运行。Fleet 使用严格主机密钥校验和非交互式认证，不会自动接受陌生主机，也不会替你生成密钥或关闭校验。
+
+远端需要 POSIX shell。若 CLI 只在交互式 shell 的 PATH 中可见，在配置中用 `command` 指定其绝对路径。已有 tmux 会话可通过自定义交互配置附着，见[SSH 与已有 Agent 接入说明](README.fleet.zh-CN.md#接入已经运行的远程-agent)。
+
+## 从源码运行
+
+开发和打包建议使用 **Node.js 22**。下面的操作适用于已安装 Git 和 Node.js 的开发环境：
 
 ```bash
-pixel-agents --port 3100
-pixel-agents --host 127.0.0.1 --port 3100
-pixel-agents --no-terminal
-pixel-agents --help
-```
-
-The default bind address is `127.0.0.1`. Binding to `0.0.0.0` exposes the UI and WebSocket to the local network; do this only on a trusted network.
-
-Open the URL the CLI prints - it carries a `?token=` for this server. Any browser can watch the office without it, but installing or removing hooks (which edits your agent tool's own settings file, like the `~/.claude/settings.json`), launching agents from the browser and attaching to their terminals are only offered to a session that has the token, so an untokened client on the network cannot approve or do any of it. Open the bare address instead and the hooks toggle in Settings is refused (reporting the actual install state rather than appearing to work) and the **+ Agent** button explains what it needs. Standalone keeps the same token across restarts (in `~/.pixel-agents/standalone-token`, readable only by you), so a bookmarked or home-screen URL keeps working — as long as the port stays the same too, which takes `--port` (the default port is picked fresh on every start).
-
-Treat that URL as a secret: the token is a bearer capability, not proof of being local. Whoever holds it can approve the hook install from anywhere the server is reachable — so don't paste the URL into a shared channel, and note that it also lands in your browser history (the server's own request log redacts it).
-
-Pass `--no-terminal` to disable the embedded terminal — watch agents without launching or attaching to them from the browser.
-
-Copying from the embedded terminal is verbatim: Cmd+C (Mac), Ctrl+C or Ctrl+Shift+C with a selection (Windows, Linux), the browser's Copy, and the **Copy** button on a phone copy exactly what is on screen. Claude Code wraps long prose into lines indented two spaces; to copy such a passage as flowing text instead, select it and press **Alt+C** (**Option+C** on a Mac), or tap **Copy as text** on a phone. On a phone opened over plain `http://` (a LAN address), the paste key asks for the text in a prompt, since the page cannot read the clipboard there.
-
-### Running the extension and standalone together
-
-The extension and standalone CLI can run at the same time. Each server registers under `~/.pixel-agents/servers/`; the hook script sends events to all active registrations. VS Code and standalone keep separate agents, seats, and settings while using the shared office layout.
-
-Stop a standalone server with **Ctrl+C**. It removes only its own registration.
-
-## Customizing the Office
-
-Click **Layout** to edit the office:
-
-- Paint floor patterns and walls, with color and contrast controls.
-- Place, rotate, recolor, select, and remove furniture.
-- Paint auto-tiling carpets and customize their main and accent colors.
-- Add animated pets; click a pet in the office to interact with it.
-- Create named **Areas**, paint their tiles, and assign Directories to them (agents launched in a Directory prefer seats in its Areas).
-- Undo/redo changes, then import or export the complete layout as JSON.
-
-Layouts can grow to 64×64 tiles by clicking the ghost border outside the current grid.
-
-### Office assets
-
-Bundled furniture, floors, walls, carpets, characters, and pets live under `webview-ui/public/assets/`. Furniture manifests describe sprites, rotation groups, state groups, and animation frames.
-
-Use **Settings → Add Asset Directory** to load external characters, pets, and furniture. See [docs/external-assets.md](docs/external-assets.md) for furniture directory structure and manifest details. The visual asset manager at `scripts/asset-manager.html` helps create furniture manifests.
-
-## How It Works
-
-Pixel Agents uses two Claude Code detection paths:
-
-- **Hooks mode** (default) — a hook script receives Claude events such as `SessionStart`, `PreToolUse`, `PermissionRequest`, and `Stop`. It discovers active Pixel Agents servers and sends authenticated events to each one.
-- **Heuristic mode** (fallback) — when hooks are unavailable, the runtime infers agent status by scanning Claude's JSONL session transcripts under `~/.claude/projects/`. Transcripts are also read in hooks mode for details not present in an event.
-
-The Claude provider normalizes both sources into a shared `AgentEvent` model. `AgentRuntime` updates the central state store, and the active transport sends typed messages to the React webview. The office renders through Canvas 2D with pathfinding and character state machines.
-
-Pixel Agents does not modify Claude Code. Its hook configuration and persistent data live under `~/.claude/` and `~/.pixel-agents/` respectively.
-
-### Architecture
-
-- **`core/`** — provider, adapter, transport, schema, and AsyncAPI message contracts with no runtime side effects.
-- **`server/`** — shared Fastify server, agent runtime, persistence, Claude provider, transcript scanning, and standalone CLI.
-- **`adapters/vscode/`** — the VS Code adapter: terminal, persistence, and webview bridge.
-- **`webview-ui/`** — React 19, Vite, Canvas 2D, and adapter-specific transports for VS Code and browser WebSocket clients.
-
-The extension and CLI are bundled with esbuild; the webview is built with Vite. Unit tests use Vitest and Node's test runner, and end-to-end coverage uses Playwright against VS Code and standalone.
-
-## Development
-
-```bash
-git clone https://github.com/pixel-agents-hq/pixel-agents.git
-cd pixel-agents
-npm install
+git clone https://github.com/Zhao-zixi/pixel-agents-fleet.git
+cd pixel-agents-fleet
+npm ci
 npm run build
+npm run fleet
 ```
 
-Press **F5** in VS Code to launch the Extension Development Host. To run the standalone bundle built from source:
+指定配置：
 
 ```bash
-node dist/cli.js
+npm run fleet -- --fleet fleet.config.json
 ```
 
-Common checks:
+### 无模型离线演示
+
+构建后运行：
+
+```bash
+npm run fleet:demo
+```
+
+打开终端打印的 URL，在「多 Agent 小队」选择「演示·一个 Agent 三个对话」。启动一次即可观察三个对话小人、输出隔离、共享终端以及完成后收起。演示使用模拟事件，不调用收费模型、不修改你的项目文件。
+
+## 一键打包 Windows
+
+在 **Windows x64 + Node.js 22** 的源码目录中运行：
+
+```bash
+npm run package:windows
+```
+
+也可以双击仓库根目录的 `package-windows.cmd`，或直接执行：
+
+```powershell
+powershell -File scripts/package-windows.ps1
+```
+
+打包脚本安装依赖、构建应用并生成包含 Node.js 运行时的便携包。首次打包需要联网下载依赖和官方 Node.js 运行时。发布产物及校验文件以 [Releases](https://github.com/Zhao-zixi/pixel-agents-fleet/releases) 页面为准。
+
+本仓库的发布目标是 **GitHub Release**。不要用上游的 `npx pixel-agents` 或上游 Marketplace 页面安装这个 Fleet 分支；本分支没有声明已发布到 npm、VS Code Marketplace 或 Open VSX。
+
+## 使用边界与安全
+
+- 服务默认只监听 `127.0.0.1`。终端 URL 中的 token 是操作凭据，不要公开、截图分享或发送给不信任的人。需要外网访问时，请自行采用可信的受控访问方式。
+- 默认保留 Agent CLI 自己的审批与沙箱策略，不自动添加跳过权限检查参数。运行真实 Agent 仍可能修改文件、执行命令或产生模型费用。
+- 「收起小人」只隐藏角色；「停止整个 Agent」针对进程组。SSH 断线或停止本地连接不保证远端已脱离终端的任务停止，也不会自动重连重跑。
+- 进程和终端输出不在服务重启后恢复。可选持久化时间线仅记录有限的状态元数据，不保存任务内容或终端输出，不提供任务恢复执行。
+- 工作区差异有时间、文件数和大小限制。敏感路径会过滤，但这不是完整的秘密检测器；潜在重叠提示不能证明某个 Agent 修改了某个文件。
+- **真实远程服务器以及各 Agent 的具体版本、账号和模型权限仍需实际验证。** 模拟测试或本地测试不能替代你的真实环境验收。
+
+## 开发与验证
 
 ```bash
 npm run check-types
 npm run lint
 npm test
-npm run e2e
+npm run test:fleet
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and [e2e/README.md](e2e/README.md) for the end-to-end suite.
-
-### Hosted Test Reports
-
-Build the combined Allure report locally and stage it for Vercel:
+按需运行端到端测试：
 
 ```bash
-npm run test
 npm run e2e
-npm run e2e -- --attach-videos-on-success
-npm run vercel:prepare
 ```
 
-Use `npm run test:report` to build the combined report without preparing the Vercel output, then `npm run test:report:open` to serve it locally.
+日常 CI 保持单个轻量 Linux 任务，完整跨平台测试仅手动启动并需明确确认。Dependabot 自动版本升级保持暂停。发布打包与完整测试不是每次提交都运行的大矩阵；手动运行也可能消耗 GitHub Actions 额度，不代表保证免费。详见 [CI 用量控制](README.fleet.zh-CN.md#ci-用量控制)。
 
-The staged output serves the combined `e2e`, `server`, and `webview` Allure report at `/reports/allure/`; it does not include a standalone webview preview. GitHub Actions creates a Vercel Preview deployment only for same-repository pull requests targeting `main`. The deploy job expects `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` secrets and skips fork pull requests.
+当前测试结果以对应提交的 [Actions](https://github.com/Zhao-zixi/pixel-agents-fleet/actions) 和 Release 说明为准，详细接入文档中的早期测试记录不代表每个版本都已通过相同验证。
 
-## Troubleshooting
+### 代码结构
 
-- **Standalone will not start:** verify Node.js 20+, omit `--port` to choose a free port, or select another fixed port.
-- **An agent is missing:** confirm **Settings → Instant Detection (Hooks)** is on and that the session belongs to the current workspace. Enable **Watch All Sessions** if needed.
-- **The UI looks disconnected:** open **Settings → Debug View** to inspect the server connection, transcript path, and latest agent data.
-- **Extension and standalone are both running:** this is supported. Current versions create separate files under `~/.pixel-agents/servers/`; stopping one does not remove the other.
+- `server/src/fleet/`：环境配置、进程与对话管理、事件适配、时间线、SSH 诊断和工作区差异。
+- `server/`：共享服务、终端与独立 CLI。
+- `webview-ui/`：React 界面与 Canvas 像素办公室。
+- `core/`：类型、协议与共享接口。
+- `adapters/vscode/`：保留的 VS Code 适配器。
+- `scripts/`：构建、打包、演示和验证脚本。
 
-## Community & Contributing
+欢迎在[本仓库 Issues](https://github.com/Zhao-zixi/pixel-agents-fleet/issues) 提交问题、复现步骤或功能建议。
 
-Join the [Discord](https://discord.gg/Yk7jXebv9H) to chat with other users and follow development. Use [Issues](https://github.com/pixel-agents-hq/pixel-agents/issues) to report bugs or request features, and [Discussions](https://github.com/pixel-agents-hq/pixel-agents/discussions) for questions and ideas.
+## 许可证与致谢
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
+本项目基于 [pixel-agents-hq/pixel-agents](https://github.com/pixel-agents-hq/pixel-agents) 开发，感谢 Pablo De Lucca 及上游贡献者。Fleet 分支由 Zhao-zixi 维护，保留上游 [MIT 许可证及版权声明](LICENSE)，不把上游代码声明为原创。
 
-## Supporting the Project
-
-<a href="https://github.com/sponsors/pablodelucca">
-  <img src="https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github" alt="GitHub Sponsors">
-</a>
-<a href="https://ko-fi.com/pablodelucca">
-  <img src="https://img.shields.io/badge/Support-Ko--fi-ff5e5b?logo=ko-fi" alt="Ko-fi">
-</a>
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=pixel-agents-hq%2Fpixel-agents&type=date&legend=bottom-right">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=pixel-agents-hq/pixel-agents&type=date&theme=dark&legend=bottom-right&sealed_token=Vn3YGMuZ_HFZAf56zIUQGCBJDYtDq38sOReKlcxWklxR_ilwVLynb7CPraf5uPhnAU7fwHXXoO88tzLkq9tpEYIExl4N8tcXOmu0ehAXPu5DdXNwjixYsxb00LSfeJ25f_jLkcZcTpRKLKYOb9p4_dR1jjAyrWDs7aicdbqejaDtLcVyj-oSoKkBfrS5" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=pixel-agents-hq/pixel-agents&type=date&legend=bottom-right&sealed_token=Vn3YGMuZ_HFZAf56zIUQGCBJDYtDq38sOReKlcxWklxR_ilwVLynb7CPraf5uPhnAU7fwHXXoO88tzLkq9tpEYIExl4N8tcXOmu0ehAXPu5DdXNwjixYsxb00LSfeJ25f_jLkcZcTpRKLKYOb9p4_dR1jjAyrWDs7aicdbqejaDtLcVyj-oSoKkBfrS5" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=pixel-agents-hq/pixel-agents&type=date&legend=bottom-right&sealed_token=Vn3YGMuZ_HFZAf56zIUQGCBJDYtDq38sOReKlcxWklxR_ilwVLynb7CPraf5uPhnAU7fwHXXoO88tzLkq9tpEYIExl4N8tcXOmu0ehAXPu5DdXNwjixYsxb00LSfeJ25f_jLkcZcTpRKLKYOb9p4_dR1jjAyrWDs7aicdbqejaDtLcVyj-oSoKkBfrS5" />
- </picture>
-</a>
-
-## License
-
-Pixel Agents is available under the [MIT License](LICENSE).
+角色素材感谢 [JIK-A-4 的 Metro City 角色包](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack)。字体许可见 [Noto Sans SC / SIL Open Font License](docs/licenses/NotoSansSC-OFL.txt)。代码许可证不替代第三方素材和依赖各自的许可；分发时须保留相应声明。
