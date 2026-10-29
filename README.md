@@ -117,6 +117,8 @@ powershell -File scripts/package-windows.ps1
 
 打包脚本安装依赖、构建应用并生成包含 Node.js 运行时的便携包。首次打包需要联网下载依赖和官方 Node.js 运行时。发布产物及校验文件以 [Releases](https://github.com/Zhao-zixi/pixel-agents-fleet/releases) 页面为准。
 
+如果 PowerShell 提示执行策略禁止运行脚本，请遵循你所在设备的安全策略，由你决定是否允许运行这个可信脚本；打包器不会修改系统执行策略。也可直接使用 Release 便携包，运行它不依赖 PowerShell。
+
 本仓库的发布目标是 **GitHub Release**。不要用上游的 `npx pixel-agents` 或上游 Marketplace 页面安装这个 Fleet 分支；本分支没有声明已发布到 npm、VS Code Marketplace 或 Open VSX。
 
 ## 使用边界与安全

@@ -37,7 +37,7 @@ try {
     $Base = "https://nodejs.org/dist/v$NodeVersion"
     $RuntimeName = "node-v$NodeVersion-win-x64.zip"
     $RuntimeZip = Join-Path $Temp $RuntimeName
-    Invoke-WebRequest "$Base/$RuntimeName" -OutFile $RuntimeZip
+    Invoke-WebRequest "$Base/$RuntimeName" -UseBasicParsing -OutFile $RuntimeZip
     $Sums = (Invoke-WebRequest "$Base/SHASUMS256.txt" -UseBasicParsing).Content
     $Line = ($Sums -split "`n" | Where-Object { $_.Trim().EndsWith("  $RuntimeName") })
     if (-not $Line) { throw 'Official Node.js checksum not found' }
