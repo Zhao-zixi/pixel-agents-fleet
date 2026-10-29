@@ -1,3 +1,5 @@
+# Version upgrades paused to avoid automatic CI fan-out.
+# Security-update settings and existing PRs are not changed.
 version: 2
 updates:
   # One npm entry for the whole monorepo. `directory: /` covers the root manifest
@@ -11,7 +13,7 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
     groups:
       minor-and-patch:
         update-types:
@@ -23,4 +25,4 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
