@@ -6,7 +6,7 @@
 
 ## 先玩起来：无需模型、无需 SSH
 
-推荐 Node.js 22 或更新版本。Windows 建议先在 WSL2 中体验；macOS/Linux 可直接运行。从 GitHub 获取源码后，请先安装依赖并构建；原始交付源码包附带构建后的 `dist/`。
+Windows 用户优先下载本仓库 Release 的便携 ZIP，解压后运行 `start-fleet.cmd`，无需另装 Node.js 或 WSL。源码开发推荐 Node.js 22；下列演示命令需要先安装依赖并构建。最新安装与打包说明见 [README](README.md)。
 
 ```bash
 npm ci

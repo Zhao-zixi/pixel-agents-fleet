@@ -1,12 +1,12 @@
 {
   "name": "pixel-agents",
-  "displayName": "Pixel Agents",
-  "description": "Pixel art office where your Claude Code agents come to life as animated characters",
-  "version": "1.5.0",
-  "publisher": "pablodelucca",
+  "displayName": "Pixel Agents Fleet",
+  "description": "Multi-agent pixel office with local and SSH sessions, event replay and workspace diffs",
+  "version": "1.6.0",
+  "publisher": "Zhao-zixi",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pixel-agents-hq/pixel-agents"
+    "url": "https://github.com/Zhao-zixi/pixel-agents-fleet"
   },
   "workspaces": [
     "server",
@@ -124,7 +124,9 @@
     "fleet": "node dist/cli.js",
     "fleet:demo": "node scripts/start-fleet-demo.cjs",
     "test:fleet": "npm exec --workspace server vitest -- run __tests__/fleet.test.ts",
-    "test:fleet:ssh": "node --import tsx scripts/test-fleet-ssh.ts"
+    "test:fleet:ssh": "node --import tsx scripts/test-fleet-ssh.ts",
+    "package:windows": "powershell -NoProfile -File scripts/package-windows.ps1",
+    "test:windows-package": "node scripts/verify-windows-package.mjs"
   },
   "devDependencies": {
     "@asyncapi/modelina": "^5.10.1",
@@ -180,5 +182,6 @@
   },
   "optionalDependencies": {
     "@lydell/node-pty": "^1.2.0-beta.12"
-  }
+  },
+  "private": true
 }
